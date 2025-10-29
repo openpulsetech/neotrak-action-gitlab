@@ -1,0 +1,70 @@
+# GitLab CI/CD Configuration for NTU Security Scanner
+# This replaces GitHub Actions workflow files
+
+stages:
+  - security
+
+# Default configuration
+variables:
+  SCAN_TYPE: "fs"
+  SCAN_TARGET: "."
+  SEVERITY: "HIGH,CRITICAL"
+  IGNORE_UNFIXED: "false"
+  EXIT_CODE: "1"
+  NODE_VERSION: "18"
+
+# Security scan job
+security_scan:
+  stage: security
+  image: node:${NODE_VERSION}
+  
+  before_script:
+    # Install required system dependencies
+    - apt-get update && apt-get install -y curl unzip tar
+    
+    # Install Node.js dependencies
+    - npm install
+  
+  script:
+    # Run the security scanner
+    - node index.js
+  
+  artifacts:
+    reports:
+      # Export scan results as dotenv variables
+      dotenv: scan-outputs.env
+    paths:
+      # Keep JSON report
+      - scan-results.json
+    when: always
+    expire_in: 30 days
+  
+  # Run on merge requests and main branch
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "master"
+  
+  # Allow job to fail without blocking pipeline (optional)
+  allow_failure: false
+
+# Alternative: Run on specific branches only
+security_scan_mr:
+  extends: security_scan
+  only:
+    - merge_requests
+  variables:
+    # Override variables for MR scans if needed
+    GITLAB_TOKEN: $CI_JOB_TOKEN
+
+# Alternative: Scheduled security scans
+security_scan_scheduled:
+  extends: security_scan
+  only:
+    - schedules
+  variables:
+    SCAN_TYPE: "fs"
+    SCAN_TARGET: "."
+    SEVERITY: "LOW,MEDIUM,HIGH,CRITICAL"
+    IGNORE_UNFIXED: "false"
