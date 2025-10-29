@@ -1,5 +1,6 @@
 security_scan:
   stage: test
+  image: node:18   # ✅ add this
   script:
     - echo "🔍 Starting Security Scan..."
     - apt-get update && apt-get install -y curl unzip tar
@@ -18,4 +19,4 @@ security_scan:
       - node_modules/
 
   rules:
-    - when: always   # 👈 ensures it always runs
+    - when: always
