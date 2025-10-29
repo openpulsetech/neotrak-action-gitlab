@@ -1,9 +1,5 @@
-stages:
-  - security
-
 security_scan:
-  stage: security
-
+  stage: test
   script:
     - echo "🔍 Starting Security Scan..."
     - apt-get update && apt-get install -y curl unzip tar
