@@ -2,16 +2,11 @@ security_scan:
   stage: test
   script:
     - echo "🔍 Starting Security Scan..."
-    # Update packages and install dependencies
-    - apt-get update && apt-get install -y curl unzip tar gnupg
-    # Install Node.js (example: Node 18)
-    - curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-    - apt-get install -y nodejs
-    # Verify installation
-    - node -v
-    - npm -v
-    # Run your security scan
-    - npm install
+    # Update packages and install required tools
+    - apt-get update && apt-get install -y curl unzip tar nodejs
+    # If you have npm packages, uncomment the next line
+    # - npm install
+    # Run your security scan script
     - node index.js
     - echo "✅ Scan complete."
   artifacts:
