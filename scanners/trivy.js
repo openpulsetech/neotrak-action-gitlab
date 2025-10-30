@@ -1,9 +1,7 @@
-const core = require('@actions/core');
-const exec = require('@actions/exec');
-const tc = require('@actions/tool-cache');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execSync } = require('child_process');
 
 // Trivy scanner configuration
 const TRIVY_VERSION = 'v0.48.0';
@@ -16,12 +14,44 @@ class TrivyScanner {
   }
 
   /**
+   * Logging utilities for GitLab CI
+   */
+  log(message, level = 'info') {
+    const timestamp = new Date().toISOString();
+    const prefix = {
+      debug: '🔍 [DEBUG]',
+      info: 'ℹ️  [INFO]',
+      warning: '⚠️  [WARNING]',
+      error: '❌ [ERROR]'
+    }[level] || 'ℹ️  [INFO]';
+    
+    console.log(`${timestamp} ${prefix} ${message}`);
+  }
+
+  debug(message) {
+    if (process.env.CI_DEBUG_TRACE || process.env.DEBUG) {
+      this.log(message, 'debug');
+    }
+  }
+
+  info(message) {
+    this.log(message, 'info');
+  }
+
+  warning(message) {
+    this.log(message, 'warning');
+  }
+
+  error(message) {
+    this.log(message, 'error');
+  }
+
+  /**
    * Install Trivy scanner
    */
   async install() {
     try {
-      // Set up GitHub Actions environment variables for local testing
-      this.setupLocalEnvironment();
+      this.setupGitLabEnvironment();
       
       const platform = os.platform();
       const arch = os.arch() === 'x64' ? 'amd64' : os.arch();
@@ -36,25 +66,43 @@ class TrivyScanner {
         downloadUrl = `https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION.replace('v', '')}_windows-${arch === 'amd64' ? '64bit' : 'ARM64'}.zip`;
       }
       
-      core.debug(`Downloading from: ${downloadUrl}`);
-      const downloadPath = await tc.downloadTool(downloadUrl);
+      this.debug(`Downloading from: ${downloadUrl}`);
       
-      let extractedPath;
+      // Create temp directory
+      const tempDir = path.join(os.tmpdir(), `trivy-install-${Date.now()}`);
+      fs.mkdirSync(tempDir, { recursive: true });
+      
+      const downloadPath = path.join(tempDir, 'trivy-archive');
+      
+      // Download using curl (available in GitLab CI runners)
+      this.info('📥 Downloading Trivy scanner...');
+      execSync(`curl -L -o "${downloadPath}" "${downloadUrl}"`, { stdio: 'inherit' });
+      
+      // Extract
+      this.info('📦 Extracting archive...');
+      const extractDir = path.join(tempDir, 'extracted');
+      fs.mkdirSync(extractDir, { recursive: true });
+      
       if (platform === 'win32') {
-        extractedPath = await tc.extractZip(downloadPath);
+        execSync(`unzip -q "${downloadPath}" -d "${extractDir}"`, { stdio: 'inherit' });
       } else {
-        extractedPath = await tc.extractTar(downloadPath);
+        execSync(`tar -xzf "${downloadPath}" -C "${extractDir}"`, { stdio: 'inherit' });
       }
       
       // Rename binary to hide Trivy branding
       const originalBinary = platform === 'win32' ? 'trivy.exe' : 'trivy';
       const newBinary = platform === 'win32' ? `${SCANNER_BINARY}.exe` : SCANNER_BINARY;
       
-      const trivyPath = path.join(extractedPath, originalBinary);
-      const scannerPath = path.join(extractedPath, newBinary);
+      const trivyPath = path.join(extractDir, originalBinary);
+      const cacheDir = process.env.SCANNER_CACHE_DIR || path.join(os.homedir(), '.cache', 'ntu-scanner');
+      fs.mkdirSync(cacheDir, { recursive: true });
+      
+      const scannerPath = path.join(cacheDir, newBinary);
       
       if (fs.existsSync(trivyPath)) {
-        fs.renameSync(trivyPath, scannerPath);
+        fs.copyFileSync(trivyPath, scannerPath);
+      } else {
+        throw new Error(`Trivy binary not found at ${trivyPath}`);
       }
       
       // Make executable on Unix systems
@@ -62,15 +110,19 @@ class TrivyScanner {
         fs.chmodSync(scannerPath, '755');
       }
       
-      // Add to PATH
-      const cachedPath = await tc.cacheDir(
-        path.dirname(scannerPath), 
-        'ntu-scanner-trivy', 
-        TRIVY_VERSION
-      );
-      core.addPath(cachedPath);
+      this.binaryPath = scannerPath;
       
-      this.binaryPath = path.join(cachedPath, newBinary);
+      // Add to PATH for this process
+      process.env.PATH = `${cacheDir}${path.delimiter}${process.env.PATH}`;
+      
+      // Cleanup temp directory
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        this.debug(`Failed to cleanup temp directory: ${cleanupError.message}`);
+      }
+      
+      this.info(`✅ Trivy scanner installed at: ${scannerPath}`);
       
       return this.binaryPath;
       
@@ -80,30 +132,27 @@ class TrivyScanner {
   }
 
   /**
-   * Set up local environment for testing
+   * Set up GitLab CI environment
    */
-  setupLocalEnvironment() {
-    // Set required GitHub Actions environment variables for local testing
-    if (!process.env.RUNNER_TEMP) {
-      process.env.RUNNER_TEMP = os.tmpdir();
+  setupGitLabEnvironment() {
+    // Set up environment variables for GitLab CI
+    if (!process.env.CI_PROJECT_DIR) {
+      process.env.CI_PROJECT_DIR = process.cwd();
     }
-    if (!process.env.RUNNER_TOOL_CACHE) {
-      process.env.RUNNER_TOOL_CACHE = path.join(os.homedir(), '.cache', 'actions');
+    
+    if (!process.env.CI_BUILDS_DIR) {
+      process.env.CI_BUILDS_DIR = process.cwd();
     }
-    if (!process.env.RUNNER_WORKSPACE) {
-      process.env.RUNNER_WORKSPACE = process.cwd();
-    }
-    if (!process.env.GITHUB_WORKSPACE) {
-      process.env.GITHUB_WORKSPACE = process.cwd();
-    }
+    
+    const cacheDir = process.env.SCANNER_CACHE_DIR || path.join(os.homedir(), '.cache', 'ntu-scanner');
     
     // Ensure cache directory exists
-    if (!fs.existsSync(process.env.RUNNER_TOOL_CACHE)) {
-      fs.mkdirSync(process.env.RUNNER_TOOL_CACHE, { recursive: true });
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
     }
     
-    core.debug(`Local environment setup: RUNNER_TEMP=${process.env.RUNNER_TEMP}`);
-    core.debug(`Local environment setup: RUNNER_TOOL_CACHE=${process.env.RUNNER_TOOL_CACHE}`);
+    this.debug(`GitLab environment setup: CI_PROJECT_DIR=${process.env.CI_PROJECT_DIR}`);
+    this.debug(`GitLab environment setup: SCANNER_CACHE_DIR=${cacheDir}`);
   }
 
   /**
@@ -126,9 +175,9 @@ class TrivyScanner {
       // Convert severity to uppercase (Trivy expects uppercase)
       const severityUpper = severity.toUpperCase();
       
-      core.info(`🔍 Scanning: ${scanTarget}`);
-      core.info(`🎯 Scan Type: ${scanType}`);
-      core.info(`⚠️  Severity: ${severityUpper}`);
+      this.info(`🔍 Scanning: ${scanTarget}`);
+      this.info(`🎯 Scan Type: ${scanType}`);
+      this.info(`⚠️  Severity: ${severityUpper}`);
       
       // Create temporary output file for JSON results
       const jsonOutputPath = path.join(os.tmpdir(), `trivy-scan-results-${Date.now()}.json`);
@@ -147,47 +196,34 @@ class TrivyScanner {
         args.push('--ignore-unfixed');
       }
       
-      // Add skip dirs to avoid scanning action's own files
-      args.push('--skip-dirs', 'node_modules,.git,.github');
+      // Add skip dirs to avoid scanning scanner's own files
+      args.push('--skip-dirs', 'node_modules,.git,.gitlab');
       
       args.push(scanTarget);
       
-      core.info(`📝 Running: ${SCANNER_BINARY} ${args.join(' ')}`);
+      const command = `"${this.binaryPath || SCANNER_BINARY}" ${args.join(' ')}`;
+      this.info(`📝 Running: ${command}`);
       
       // Execute scan
-      let stdoutOutput = '';
-      let stderrOutput = '';
-      
-      const options = {
-        listeners: {
-          stdout: (data) => {
-            stdoutOutput += data.toString();
-          },
-          stderr: (data) => {
-            stderrOutput += data.toString();
-          }
-        },
-        ignoreReturnCode: true,
-        cwd: path.dirname(scanTarget)
-      };
-      
-      const exitCode = await exec.exec(SCANNER_BINARY, args, options);
-      
-      core.info(`✅ Scan completed with exit code: ${exitCode}`);
-      
-      // Log any stderr (but not as error if exit code is 0)
-      if (stderrOutput && exitCode !== 0) {
-        core.warning(`Stderr output: ${stderrOutput}`);
+      try {
+        execSync(command, {
+          cwd: path.dirname(scanTarget),
+          stdio: 'inherit',
+          env: process.env
+        });
+      } catch (execError) {
+        // Log but don't fail - we set --exit-code 0
+        this.warning(`Scan completed with warnings: ${execError.message}`);
       }
       
+      this.info(`✅ Scan completed`);
+      
       // Parse results
-      core.info(`📄 Reading results from: ${jsonOutputPath}`);
+      this.info(`📄 Reading results from: ${jsonOutputPath}`);
       
       // Check if file was created
       if (!fs.existsSync(jsonOutputPath)) {
-        core.error(`❌ Output file was not created: ${jsonOutputPath}`);
-        core.error(`Stdout: ${stdoutOutput}`);
-        core.error(`Stderr: ${stderrOutput}`);
+        this.error(`❌ Output file was not created: ${jsonOutputPath}`);
         throw new Error('Trivy did not produce output file');
       }
       
@@ -199,14 +235,14 @@ class TrivyScanner {
           fs.unlinkSync(jsonOutputPath);
         }
       } catch (cleanupError) {
-        core.debug(`Failed to cleanup temp file: ${cleanupError.message}`);
+        this.debug(`Failed to cleanup temp file: ${cleanupError.message}`);
       }
       
       return results;
       
     } catch (error) {
-      core.error(`❌ Trivy scan failed: ${error.message}`);
-      core.debug(`Stack: ${error.stack}`);
+      this.error(`❌ Trivy scan failed: ${error.message}`);
+      this.debug(`Stack: ${error.stack}`);
       throw error;
     }
   }
@@ -217,7 +253,7 @@ class TrivyScanner {
   parseResults(jsonPath) {
     try {
       if (!fs.existsSync(jsonPath)) {
-        core.warning(`⚠️ JSON output file not found: ${jsonPath}`);
+        this.warning(`⚠️ JSON output file not found: ${jsonPath}`);
         return {
           total: 0,
           critical: 0,
@@ -229,12 +265,12 @@ class TrivyScanner {
       }
       
       const stats = fs.statSync(jsonPath);
-      core.info(`📊 JSON file size: ${stats.size} bytes`);
+      this.info(`📊 JSON file size: ${stats.size} bytes`);
       
       const jsonContent = fs.readFileSync(jsonPath, 'utf8');
       
       if (!jsonContent || jsonContent.trim() === '') {
-        core.warning('⚠️ JSON output file is empty');
+        this.warning('⚠️ JSON output file is empty');
         return {
           total: 0,
           critical: 0,
@@ -245,7 +281,7 @@ class TrivyScanner {
         };
       }
       
-      core.debug(`First 200 chars of JSON: ${jsonContent.substring(0, 200)}`);
+      this.debug(`First 200 chars of JSON: ${jsonContent.substring(0, 200)}`);
       
       const data = JSON.parse(jsonContent);
       
@@ -257,13 +293,13 @@ class TrivyScanner {
       
       // Check if Results exists and has data
       if (data.Results && Array.isArray(data.Results)) {
-        core.info(`📦 Processing ${data.Results.length} result(s)`);
+        this.info(`📦 Processing ${data.Results.length} result(s)`);
         
         data.Results.forEach((result, idx) => {
-          core.debug(`Result ${idx + 1}: Type=${result.Type}, Target=${result.Target}`);
+          this.debug(`Result ${idx + 1}: Type=${result.Type}, Target=${result.Target}`);
           
           if (result.Vulnerabilities && Array.isArray(result.Vulnerabilities)) {
-            core.info(`   📋 Result ${idx + 1} (${result.Type || 'unknown'}): ${result.Vulnerabilities.length} vulnerabilities`);
+            this.info(`   📋 Result ${idx + 1} (${result.Type || 'unknown'}): ${result.Vulnerabilities.length} vulnerabilities`);
             
             result.Vulnerabilities.forEach(vuln => {
               vulnerabilities.push({
@@ -291,25 +327,25 @@ class TrivyScanner {
               }
             });
           } else {
-            core.info(`   ✅ Result ${idx + 1} (${result.Type || 'unknown'}): No vulnerabilities`);
+            this.info(`   ✅ Result ${idx + 1} (${result.Type || 'unknown'}): No vulnerabilities`);
           }
         });
       } else {
-        core.warning('⚠️ No Results array found in JSON output');
+        this.warning('⚠️ No Results array found in JSON output');
         if (data) {
-          core.debug(`JSON keys: ${Object.keys(data).join(', ')}`);
+          this.debug(`JSON keys: ${Object.keys(data).join(', ')}`);
         }
       }
       
       const totalCount = criticalCount + highCount + mediumCount + lowCount;
       
       // Log scanner-specific results
-      core.info(`\n✨ Trivy Scan Complete:`);
-      core.info(`   📊 Total: ${totalCount} vulnerabilities`);
-      core.info(`   🔴 Critical: ${criticalCount}`);
-      core.info(`   🟠 High: ${highCount}`);
-      core.info(`   🟡 Medium: ${mediumCount}`);
-      core.info(`   🟢 Low: ${lowCount}`);
+      this.info(`\n✨ Trivy Scan Complete:`);
+      this.info(`   📊 Total: ${totalCount} vulnerabilities`);
+      this.info(`   🔴 Critical: ${criticalCount}`);
+      this.info(`   🟠 High: ${highCount}`);
+      this.info(`   🟡 Medium: ${mediumCount}`);
+      this.info(`   🟢 Low: ${lowCount}`);
       
       return {
         total: totalCount,
@@ -321,8 +357,8 @@ class TrivyScanner {
       };
       
     } catch (error) {
-      core.error(`❌ Failed to parse Trivy results: ${error.message}`);
-      core.debug(`Stack: ${error.stack}`);
+      this.error(`❌ Failed to parse Trivy results: ${error.message}`);
+      this.debug(`Stack: ${error.stack}`);
       return {
         total: 0,
         critical: 0,

@@ -1,0 +1,30 @@
+security_scan:
+  stage: test
+  image: node:18
+  before_script:
+    - echo "🔍 Preparing Security Scan..."
+    - apt-get update && apt-get install -y git curl
+  script:
+    - echo "📥 Cloning scanner repository..."
+    - git clone https://github.com/openpulsetech/neotrak-action-gitlab.git scanner-repo
+    - cd scanner-repo
+    - echo "📂 Available files:"
+    - ls -la
+    - echo "📦 Installing dependencies..."
+    - npm install
+    - echo "🚀 Running security scan..."
+    - node index.js
+    - echo "📋 Copying results..."
+    - cp scan-results.json ../../ || echo "No scan results generated"
+    - echo "✅ Scan complete."
+  artifacts:
+    paths:
+      - scan-results.json
+    expire_in: 7 days
+    when: always
+  cache:
+    key: npm-cache-$CI_COMMIT_REF_SLUG
+    paths:
+      - scanner-repo/gitlab-action/node_modules/
+  rules:
+    - when: always

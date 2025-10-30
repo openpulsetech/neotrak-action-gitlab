@@ -1,12 +1,8 @@
-const core = require('@actions/core');
-const github = require('@actions/github');
 const trivyScanner = require('./scanners/trivy');
-const cdxgenScanner = require('./scanners/sbom');
-const secretDetectorScanner = require('./scanners/secret-detector');
+// const cdxgenScanner = require('./scanners/sbom');
+// const secretDetectorScanner = require('./scanners/secret-detector');
 const path = require('path');
-// Future scanners can be imported here
-// const grypeScanner = require('./scanners/grype');
-// const snykScanner = require('./scanners/snyk');
+const fs = require('fs');
 
 class NTUSecurityOrchestrator {
   constructor() {
@@ -21,14 +17,69 @@ class NTUSecurityOrchestrator {
     };
   }
 
-   /**
+  /**
+   * Logging utilities for GitLab CI
+   */
+  log(message, level = 'info') {
+    const timestamp = new Date().toISOString();
+    const prefix = {
+      debug: '🔍 [DEBUG]',
+      info: 'ℹ️  [INFO]',
+      warning: '⚠️  [WARNING]',
+      error: '❌ [ERROR]'
+    }[level] || 'ℹ️  [INFO]';
+    
+    console.log(`${timestamp} ${prefix} ${message}`);
+  }
+
+  debug(message) {
+    if (process.env.CI_DEBUG_TRACE || process.env.DEBUG) {
+      this.log(message, 'debug');
+    }
+  }
+
+  info(message) {
+    this.log(message, 'info');
+  }
+
+  warning(message) {
+    this.log(message, 'warning');
+  }
+
+  error(message) {
+    this.log(message, 'error');
+  }
+
+  startGroup(message) {
+    console.log(`\n${'='.repeat(60)}`);
+    this.info(message);
+    console.log('='.repeat(60));
+  }
+
+  endGroup() {
+    console.log('='.repeat(60) + '\n');
+  }
+
+  /**
    * Get the workspace directory (the calling project's directory)
    */
   getWorkspaceDirectory() {
-    // GitHub Actions sets GITHUB_WORKSPACE to the repository directory
-    const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
-    core.info(`🏠 Workspace directory: ${workspace}`);
+    // GitLab CI sets CI_PROJECT_DIR to the repository directory
+    const workspace = process.env.CI_PROJECT_DIR || process.cwd();
+    this.info(`🏠 Workspace directory: ${workspace}`);
     return workspace;
+  }
+
+  /**
+   * Get input from environment variables (GitLab CI pattern)
+   */
+  getInput(name, defaultValue = '') {
+    // Convert input name to environment variable format
+    // e.g., 'scan-type' -> 'SCAN_TYPE' or 'INPUT_SCAN_TYPE'
+    const envName = `INPUT_${name.toUpperCase().replace(/-/g, '_')}`;
+    const simpleName = name.toUpperCase().replace(/-/g, '_');
+    
+    return process.env[envName] || process.env[simpleName] || defaultValue;
   }
 
   /**
@@ -36,39 +87,38 @@ class NTUSecurityOrchestrator {
    */
   registerScanner(scanner) {
     this.scanners.push(scanner);
-    core.info(`📦 Registered scanner: ${scanner.name}`);
+    this.info(`📦 Registered scanner: ${scanner.name}`);
   }
 
   /**
    * Initialize all scanners
    */
   async initializeScanners() {
-    core.startGroup('🔧 NTU Security Scanner Setup');
+    this.startGroup('🔧 NTU Security Scanner Setup');
     
     for (const scanner of this.scanners) {
       try {
-        core.info(`Installing ${scanner.name}...`);
+        this.info(`Installing ${scanner.name}...`);
         await scanner.install();
-        core.info(`✅ ${scanner.name} installed successfully`);
+        this.info(`✅ ${scanner.name} installed successfully`);
       } catch (error) {
-        core.warning(`Failed to install ${scanner.name}: ${error.message}`);
+        this.warning(`Failed to install ${scanner.name}: ${error.message}`);
       }
     }
     
-    core.endGroup();
+    this.endGroup();
   }
 
   /**
    * Run all registered scanners
    */
   async runScans() {
-    core.startGroup('🔍 NTU Security Scan');
+    this.startGroup('🔍 NTU Security Scan');
     
-    const scanType = core.getInput('scan-type') || 'fs';
-    const scanTarget = core.getInput('scan-target') || '.';
-    const severity = core.getInput('severity') || 'HIGH,CRITICAL';
-    const ignoreUnfixed = core.getInput('ignore-unfixed') === 'true';
-    
+    const scanType = this.getInput('scan-type', 'fs');
+    const scanTarget = this.getInput('scan-target', '.');
+    const severity = this.getInput('severity', 'HIGH,CRITICAL');
+    const ignoreUnfixed = this.getInput('ignore-unfixed') === 'true';
     
     // Get the workspace directory and resolve the scan target relative to it
     const workspaceDir = this.getWorkspaceDirectory();
@@ -76,23 +126,23 @@ class NTUSecurityOrchestrator {
       ? scanTarget 
       : path.resolve(workspaceDir, scanTarget);
 
-    core.info(`📍 Target: ${scanTarget}`);
-    core.info(`🎯 Scan Type: ${scanType}`);
-    core.info(`⚠️  Severity Filter: ${severity}`);
+    this.info(`📍 Target: ${scanTarget}`);
+    this.info(`🎯 Scan Type: ${scanType}`);
+    this.info(`⚠️  Severity Filter: ${severity}`);
     
     const scanConfig = {
       scanType,
-      scanTarget,
+      scanTarget: resolvedTarget,
       severity,
       ignoreUnfixed,
-      format: core.getInput('format') || 'table',
-      exitCode: core.getInput('exit-code') || '1',
+      format: this.getInput('format', 'table'),
+      exitCode: this.getInput('exit-code', '1'),
       workspaceDir
     };
 
     for (const scanner of this.scanners) {
       try {
-        core.info(`\n▶️  Running ${scanner.name}...`);
+        this.info(`\n▶️  Running ${scanner.name}...`);
         const result = await scanner.scan(scanConfig);
         
         if (result) {
@@ -103,11 +153,11 @@ class NTUSecurityOrchestrator {
           });
         }
       } catch (error) {
-        core.warning(`${scanner.name} scan failed: ${error.message}`);
+        this.warning(`${scanner.name} scan failed: ${error.message}`);
       }
     }
     
-    core.endGroup();
+    this.endGroup();
   }
 
   /**
@@ -125,58 +175,88 @@ class NTUSecurityOrchestrator {
    * Display consolidated results
    */
   displayResults() {
-    core.startGroup('📊 NTU Security Scan Results');
+    this.startGroup('📊 NTU Security Scan Results');
     
-    core.info('='.repeat(50));
-    core.info('CONSOLIDATED VULNERABILITY REPORT');
-    core.info('='.repeat(50));
-    core.info(`   Total Vulnerabilities: ${this.results.total}`);
-    core.info(`   🔴 Critical: ${this.results.critical}`);
-    core.info(`   🟠 High: ${this.results.high}`);
-    core.info(`   🟡 Medium: ${this.results.medium}`);
-    core.info(`   🟢 Low: ${this.results.low}`);
-    core.info('='.repeat(50));
+    this.info('='.repeat(50));
+    this.info('CONSOLIDATED VULNERABILITY REPORT');
+    this.info('='.repeat(50));
+    this.info(`   Total Vulnerabilities: ${this.results.total}`);
+    this.info(`   🔴 Critical: ${this.results.critical}`);
+    this.info(`   🟠 High: ${this.results.high}`);
+    this.info(`   🟡 Medium: ${this.results.medium}`);
+    this.info(`   🟢 Low: ${this.results.low}`);
+    this.info('='.repeat(50));
     
     // Display per-scanner breakdown
     if (this.results.scannerResults.length > 1) {
-      core.info('\n📋 Scanner Breakdown:');
+      this.info('\n📋 Scanner Breakdown:');
       this.results.scannerResults.forEach(result => {
-        core.info(`\n   ${result.scanner}:`);
-        core.info(`      Total: ${result.total}`);
-        core.info(`      Critical: ${result.critical}, High: ${result.high}`);
+        this.info(`\n   ${result.scanner}:`);
+        this.info(`      Total: ${result.total}`);
+        this.info(`      Critical: ${result.critical}, High: ${result.high}`);
       });
     }
     
-    core.endGroup();
+    this.endGroup();
   }
 
   /**
-   * Set GitHub Action outputs
+   * Set outputs (write to file for GitLab CI)
    */
   setOutputs() {
-    core.setOutput('vulnerabilities-found', this.results.total);
-    core.setOutput('critical-count', this.results.critical);
-    core.setOutput('high-count', this.results.high);
-    core.setOutput('scan-result', 
-      `Found ${this.results.total} vulnerabilities: ` +
-      `${this.results.critical} Critical, ${this.results.high} High, ` +
-      `${this.results.medium} Medium, ${this.results.low} Low`
-    );
+    // In GitLab CI, we can write outputs to a file or use dotenv artifacts
+    const outputData = {
+      vulnerabilities_found: this.results.total,
+      critical_count: this.results.critical,
+      high_count: this.results.high,
+      medium_count: this.results.medium,
+      low_count: this.results.low,
+      scan_result: `Found ${this.results.total} vulnerabilities: ` +
+        `${this.results.critical} Critical, ${this.results.high} High, ` +
+        `${this.results.medium} Medium, ${this.results.low} Low`
+    };
+
+    // Write outputs to dotenv file for GitLab CI
+    const dotenvPath = 'scan-outputs.env';
+    const dotenvContent = Object.entries(outputData)
+      .map(([key, value]) => `${key.toUpperCase()}=${value}`)
+      .join('\n');
+    
+    try {
+      fs.writeFileSync(dotenvPath, dotenvContent);
+      this.info(`📝 Outputs written to ${dotenvPath}`);
+    } catch (error) {
+      this.warning(`Failed to write outputs: ${error.message}`);
+    }
+
+    // Also write JSON report
+    const jsonPath = 'scan-results.json';
+    try {
+      fs.writeFileSync(jsonPath, JSON.stringify(this.results, null, 2));
+      this.info(`📄 JSON report written to ${jsonPath}`);
+    } catch (error) {
+      this.warning(`Failed to write JSON report: ${error.message}`);
+    }
   }
 
   /**
-   * Post results to PR if applicable
+   * Post results to Merge Request if applicable
    */
-  async postPRComment() {
-    const githubToken = core.getInput('github-token');
+  async postMRComment() {
+    const gitlabToken = this.getInput('gitlab-token') || process.env.CI_JOB_TOKEN;
+    const gitlabUrl = process.env.CI_API_V4_URL || 'https://gitlab.com/api/v4';
+    const projectId = process.env.CI_PROJECT_ID;
+    const mrIid = process.env.CI_MERGE_REQUEST_IID;
     
-    if (!githubToken || github.context.eventName !== 'pull_request') {
+    if (!gitlabToken || !mrIid) {
+      this.debug('Skipping MR comment - not in merge request context or no token available');
       return;
     }
 
     try {
-      const octokit = github.getOctokit(githubToken);
-      const context = github.context;
+      const https = require('https');
+      const http = require('http');
+      const url = require('url');
       
       const status = (this.results.critical > 0 || this.results.high > 0) 
         ? '🔴 VULNERABILITIES DETECTED' 
@@ -212,15 +292,45 @@ ${this.results.total > 0 ?
 ---
 *Powered by NTU Security Scanner*`;
       
-      await octokit.rest.issues.createComment({
-        ...context.repo,
-        issue_number: context.issue.number,
-        body: comment
+      const apiUrl = `${gitlabUrl}/projects/${projectId}/merge_requests/${mrIid}/notes`;
+      const parsedUrl = url.parse(apiUrl);
+      const protocol = parsedUrl.protocol === 'https:' ? https : http;
+      
+      const postData = JSON.stringify({ body: comment });
+      
+      const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port,
+        path: parsedUrl.path,
+        method: 'POST',
+        headers: {
+          'PRIVATE-TOKEN': gitlabToken,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      };
+      
+      await new Promise((resolve, reject) => {
+        const req = protocol.request(options, (res) => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              this.info('💬 Posted scan results to MR comment');
+              resolve();
+            } else {
+              reject(new Error(`GitLab API returned ${res.statusCode}: ${data}`));
+            }
+          });
+        });
+        
+        req.on('error', reject);
+        req.write(postData);
+        req.end();
       });
       
-      core.info('💬 Posted scan results to PR comment');
     } catch (error) {
-      core.warning(`Failed to post PR comment: ${error.message}`);
+      this.warning(`Failed to post MR comment: ${error.message}`);
     }
   }
 
@@ -228,13 +338,21 @@ ${this.results.total > 0 ?
    * Determine if workflow should fail
    */
   shouldFail() {
-    const exitCode = core.getInput('exit-code') || '1';
+    const exitCode = this.getInput('exit-code', '1');
     
     if (exitCode === '0') {
       return false;
     }
     
     return this.results.total > 0;
+  }
+
+  /**
+   * Exit with appropriate code
+   */
+  setFailed(message) {
+    this.error(message);
+    process.exit(1);
   }
 }
 
@@ -244,11 +362,8 @@ async function run() {
     
     // Register scanners
     orchestrator.registerScanner(trivyScanner);
-    orchestrator.registerScanner(cdxgenScanner);
-    orchestrator.registerScanner(secretDetectorScanner);
-    // Add more scanners here as needed:
-    // orchestrator.registerScanner(grypeScanner);
-    // orchestrator.registerScanner(snykScanner);
+    // orchestrator.registerScanner(cdxgenScanner);
+    // orchestrator.registerScanner(secretDetectorScanner);
     
     // Initialize all scanners
     await orchestrator.initializeScanners();
@@ -262,21 +377,22 @@ async function run() {
     // Set outputs
     orchestrator.setOutputs();
     
-    // Post PR comment
-    await orchestrator.postPRComment();
+    // Post MR comment
+    await orchestrator.postMRComment();
     
     // Check if should fail
     if (orchestrator.shouldFail()) {
-      core.setFailed(
+      orchestrator.setFailed(
         `NTU Security Scanner found ${orchestrator.results.total} vulnerabilities ` +
         `(${orchestrator.results.critical} Critical, ${orchestrator.results.high} High)`
       );
     } else {
-      core.info('✅ Security scan completed successfully');
+      orchestrator.info('✅ Security scan completed successfully');
     }
     
   } catch (error) {
-    core.setFailed(`NTU Security scan failed: ${error.message}`);
+    console.error(`❌ [ERROR] NTU Security scan failed: ${error.message}`);
+    process.exit(1);
   }
 }
 
