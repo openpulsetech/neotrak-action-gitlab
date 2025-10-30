@@ -7,7 +7,7 @@ security_scan:
   script:
     - echo "📥 Cloning scanner repository..."
     - git clone https://github.com/openpulsetech/neotrak-action-gitlab.git scanner-repo
-    - cd scanner-repo/gitlab-action
+    - cd scanner-repo
     - echo "📂 Available files:"
     - ls -la
     - echo "📦 Installing dependencies..."
