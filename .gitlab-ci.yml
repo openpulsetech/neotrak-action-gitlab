@@ -2,39 +2,57 @@ security_scan:
   stage: test
   script:
     - echo "🔍 Starting Security Scan..."
-    - echo "📁 Current working directory:"
-    - pwd
-    - echo "📂 Files in current directory:"
-    - ls -la
-    - echo "🔍 Looking for index.js:"
-    - find . -name "index.js" -type f
+    - echo "📁 Current working directory: $(pwd)"
     
     # Update packages and install required tools
-    - apt-get update && apt-get install -y curl unzip tar nodejs npm
+    - apt-get update && apt-get install -y curl unzip tar nodejs npm git
     
-    # Verify Node.js is installed
-    - node --version
-    - npm --version
+    # Clone the entire scanner repository
+    - echo "📥 Cloning scanner repository with all files..."
+    - git clone https://github.com/openpulsetech/neotrak-action-gitlab.git scanner-repo
     
-    # Install dependencies if package.json exists
-    - |
-      if [ -f "package.json" ]; then
-        echo "📦 Installing dependencies..."
-        npm install
-      fi
+    # Navigate to the gitlab-action directory
+    - cd scanner-repo/gitlab-action
     
-    # Run the script
-    - echo "🚀 Running index.js from $(pwd)"
+    # List all files to verify
+    - echo "📂 Files in scanner directory:"
+    - ls -la
+    
+    # Install all npm dependencies
+    - echo "📦 Installing dependencies..."
+    - npm install
+    
+    # Set environment variables for the scanner
+    - export SCAN_TYPES="$SCAN_TYPES"
+    - export DEBUG_MODE="$DEBUG_MODE"
+    - export WORKSPACE_ID="$WORKSPACE_ID"
+    - export PROJECT_ID="$PROJECT_ID"
+    - export X_API_KEY="$X_API_KEY"
+    - export X_SECRET_KEY="$X_SECRET_KEY"
+    - export X_TENANT_KEY="$X_TENANT_KEY"
+    
+    # Run the scanner
+    - echo "🚀 Running security scan..."
     - node index.js
     
+    # Copy results back to the main project directory (if needed)
+    - |
+      if [ -f "scan-results.json" ]; then
+        cp scan-results.json ../../
+        echo "✅ Scan results copied"
+      fi
+    
     - echo "✅ Scan complete."
+    
   artifacts:
     paths:
       - scan-results.json
+      - scanner-repo/gitlab-action/scan-results.json
     expire_in: 7 days
+    when: always
   cache:
     key: npm-cache-$CI_COMMIT_REF_SLUG
     paths:
-      - node_modules/
+      - scanner-repo/gitlab-action/node_modules/
   rules:
     - when: always
