@@ -2,12 +2,31 @@ security_scan:
   stage: test
   script:
     - echo "🔍 Starting Security Scan..."
+    - echo "📁 Current working directory:"
+    - pwd
+    - echo "📂 Files in current directory:"
+    - ls -la
+    - echo "🔍 Looking for index.js:"
+    - find . -name "index.js" -type f
+    
     # Update packages and install required tools
-    - apt-get update && apt-get install -y curl unzip tar nodejs
-    # If you have npm packages, uncomment the next line
-    # - npm install
-    # Run your security scan script
+    - apt-get update && apt-get install -y curl unzip tar nodejs npm
+    
+    # Verify Node.js is installed
+    - node --version
+    - npm --version
+    
+    # Install dependencies if package.json exists
+    - |
+      if [ -f "package.json" ]; then
+        echo "📦 Installing dependencies..."
+        npm install
+      fi
+    
+    # Run the script
+    - echo "🚀 Running index.js from $(pwd)"
     - node index.js
+    
     - echo "✅ Scan complete."
   artifacts:
     paths:
