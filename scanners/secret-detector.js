@@ -1,9 +1,9 @@
-const core = require('@actions/core');
-const exec = require('@actions/exec');
+const exec = require('child_process').execSync;
+const execAsync = require('child_process').exec;
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
-//const axios = require('axios');
+const axios = require('axios');
 
 const GITLEAKS_VERSION = 'v8.27.2';
 const GITLEAKS_BINARY = 'gitleaks';
@@ -24,9 +24,20 @@ class SecretDetectorScanner {
     this.binaryPath = null;
   }
 
+  log(message, level = 'info') {
+    const prefix = {
+      info: '📋',
+      error: '❌',
+      warning: '⚠️',
+      debug: '🔍'
+    }[level] || '•';
+    
+    console.log(`${prefix} ${message}`);
+  }
+
   async install() {
     try {
-      core.info(`📦 Installing Gitleaks ${GITLEAKS_VERSION}...`);
+      this.log(`Installing Gitleaks ${GITLEAKS_VERSION}...`, 'info');
       
       const platform = os.platform();
       const arch = os.arch() === 'x64' ? 'x64' : 'arm64';
@@ -51,26 +62,42 @@ class SecretDetectorScanner {
         throw new Error(`Unsupported platform: ${platform}`);
       }
 
-      core.debug(`Downloading Gitleaks from: ${downloadUrl}`);
+      this.log(`Downloading Gitleaks from: ${downloadUrl}`, 'debug');
 
-      // Use @actions/tool-cache for reliable download and extraction
-      const { downloadTool, extractTar, extractZip, cacheDir } = require('@actions/tool-cache');
-      
-      // Download the file
-      const downloadPath = await downloadTool(downloadUrl);
-      core.debug(`Downloaded to: ${downloadPath}`);
+      // Create temp directory for download
+      const tempDir = path.join(os.tmpdir(), `gitleaks_${Date.now()}`);
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+
+      const downloadPath = path.join(tempDir, fileName);
+
+      // Download the file using curl or wget
+      try {
+        exec(`curl -L -o "${downloadPath}" "${downloadUrl}"`, { stdio: 'inherit' });
+      } catch (e) {
+        // Fallback to wget if curl fails
+        exec(`wget -O "${downloadPath}" "${downloadUrl}"`, { stdio: 'inherit' });
+      }
+
+      this.log(`Downloaded to: ${downloadPath}`, 'debug');
 
       // Extract the archive
-      let extractedPath;
-      if (platform === 'win32') {
-        extractedPath = await extractZip(downloadPath);
-      } else {
-        extractedPath = await extractTar(downloadPath);
+      const extractDir = path.join(tempDir, 'extracted');
+      if (!fs.existsSync(extractDir)) {
+        fs.mkdirSync(extractDir, { recursive: true });
       }
-      core.debug(`Extracted to: ${extractedPath}`);
+
+      if (platform === 'win32') {
+        exec(`unzip "${downloadPath}" -d "${extractDir}"`, { stdio: 'inherit' });
+      } else {
+        exec(`tar -xzf "${downloadPath}" -C "${extractDir}"`, { stdio: 'inherit' });
+      }
+
+      this.log(`Extracted to: ${extractDir}`, 'debug');
 
       // Find the binary
-      const binaryPath = path.join(extractedPath, binaryName);
+      const binaryPath = path.join(extractDir, binaryName);
       if (!fs.existsSync(binaryPath)) {
         throw new Error(`Gitleaks binary not found at: ${binaryPath}`);
       }
@@ -80,22 +107,29 @@ class SecretDetectorScanner {
         fs.chmodSync(binaryPath, '755');
       }
 
-      // Cache the binary for reuse
-      const cachedPath = await cacheDir(path.dirname(binaryPath), 'gitleaks', GITLEAKS_VERSION);
-      this.binaryPath = path.join(cachedPath, binaryName);
+      // Move to a permanent location
+      const binDir = path.join(os.homedir(), '.local', 'bin');
+      if (!fs.existsSync(binDir)) {
+        fs.mkdirSync(binDir, { recursive: true });
+      }
+
+      this.binaryPath = path.join(binDir, binaryName);
+      fs.copyFileSync(binaryPath, this.binaryPath);
+
+      if (platform !== 'win32') {
+        fs.chmodSync(this.binaryPath, '755');
+      }
       
       // Add to PATH for this session
-      const binDir = path.dirname(this.binaryPath);
       process.env.PATH = `${binDir}:${process.env.PATH}`;
       
-      core.info(`✅ Gitleaks installed successfully at: ${this.binaryPath}`);
+      this.log(`Gitleaks installed successfully at: ${this.binaryPath}`, 'info');
       return this.binaryPath;
     } catch (error) {
       throw new Error(`Failed to install Gitleaks: ${error.message}`);
     }
   }
 
-  // ✅ Stronger regex: avoids matching dummy values like "hello", "test123"
   createCustomRules() {
     return `
 [[rules]]
@@ -123,6 +157,12 @@ regex = '''ghp_[A-Za-z0-9_]{36}'''
 tags = ["github", "token"]
 
 [[rules]]
+id = "gitlab-token"
+description = "GitLab Personal Access Token"
+regex = '''glpat-[A-Za-z0-9\\-_]{20}'''
+tags = ["gitlab", "token"]
+
+[[rules]]
 id = "jwt"
 description = "JSON Web Token"
 regex = '''eyJ[A-Za-z0-9-_]+\\.eyJ[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+'''
@@ -143,27 +183,28 @@ tags = ["firebase", "apikey"]
   }
 
   async runGitleaks(scanDir, reportPath, rulesPath) {
-    const args = ['detect', '--source', scanDir, '--report-path', reportPath, '--config', rulesPath, '--no-banner'];
-    core.debug(`🔍 Running Gitleaks: ${this.binaryPath} ${args.join(' ')}`);
+    return new Promise((resolve, reject) => {
+      const args = ['detect', '--source', scanDir, '--report-path', reportPath, '--config', rulesPath, '--no-banner'];
+      const command = `"${this.binaryPath}" ${args.join(' ')}`;
+      
+      this.log(`Running Gitleaks: ${command}`, 'debug');
 
-    let stdoutOutput = '';
-    let stderrOutput = '';
-
-    const options = {
-      listeners: {
-        stdout: (data) => { stdoutOutput += data.toString(); },
-        stderr: (data) => { stderrOutput += data.toString(); },
-      },
-      ignoreReturnCode: true,
-    };
-
-    const exitCode = await exec.exec(this.binaryPath, args, options);
-    core.debug(`Gitleaks STDOUT: ${stdoutOutput}`);
-    if (stderrOutput && stderrOutput.trim()) {
-      core.warning(`Gitleaks STDERR: ${stderrOutput}`);
-    }
-    
-    return exitCode;
+      execAsync(command, (error, stdout, stderr) => {
+        if (stdout) {
+          this.log(`Gitleaks STDOUT: ${stdout}`, 'debug');
+        }
+        if (stderr && stderr.trim()) {
+          this.log(`Gitleaks STDERR: ${stderr}`, 'warning');
+        }
+        
+        // Gitleaks returns exit code 1 when secrets are found, which is expected
+        if (error && error.code !== 1) {
+          reject(error);
+        } else {
+          resolve(error ? error.code : 0);
+        }
+      });
+    });
   }
 
   async checkReport(reportPath) {
@@ -196,14 +237,12 @@ tags = ["firebase", "apikey"]
     };
   }
 
-  // Utility to pad File path with dummy segments
   fixFilePath(filePath) {
-    if (!filePath) return '///////'; // 7 slashes = 8 empty segments
+    if (!filePath) return '///////';
 
     let segments = filePath.split('/');
     const requiredSegments = 8;
 
-    // Count only actual segments; empty strings from leading/trailing slashes are valid
     const nonEmptyCount = segments.filter(Boolean).length;
 
     while (nonEmptyCount + segments.length - nonEmptyCount < requiredSegments) {
@@ -230,7 +269,7 @@ tags = ["firebase", "apikey"]
     if (tenantKey) headers['x-tenant-key'] = tenantKey;
 
     try {
-      core.debug('Sending secrets:', JSON.stringify(secretsData, null, 2));
+      this.log('Sending secrets to API...', 'debug');
 
       const response = await axios.post(apiUrl, secretsData, {
         headers,
@@ -238,33 +277,30 @@ tags = ["firebase", "apikey"]
       });
 
       if (response.status >= 200 && response.status < 300) {
-        core.info('✅ Secrets updated successfully in SBOM API.');
+        this.log('Secrets updated successfully in SBOM API.', 'info');
       } else {
-        core.error(`❌ Failed to update secrets. Status: ${response.status}`);
-        core.error('Response body:', response.data);
+        this.log(`Failed to update secrets. Status: ${response.status}`, 'error');
+        this.log(`Response body: ${JSON.stringify(response.data)}`, 'error');
       }
     } catch (err) {
-      core.error('❌ Error sending secrets to SBOM API:', err.message || err);
+      this.log(`Error sending secrets to SBOM API: ${err.message || err}`, 'error');
     }
   }
 
-  /**
-   * Required by orchestrator
-   */
   async scan(config) {
     try {
       const startTime = Date.now();
-      const scanDir = config.scanTarget || config.workspaceDir || '.';
+      const scanDir = config.scanTarget || config.workspaceDir || process.env.CI_PROJECT_DIR || '.';
       const reportPath = path.join(os.tmpdir(), `gitleaks_${Date.now()}_report.json`);
       const rulesPath = this.createTempRulesFile();
 
-      core.info(`🔍 Scanning for secrets in: ${scanDir}`);
+      this.log(`Scanning for secrets in: ${scanDir}`, 'info');
 
-      // Set GIT safe directory for Docker/GitHub context
+      // Set GIT safe directory for GitLab CI context
       try {
-        await exec.exec('git', ['config', '--global', '--add', 'safe.directory', scanDir]);
+        exec(`git config --global --add safe.directory "${scanDir}"`, { stdio: 'inherit' });
       } catch (e) {
-        core.warning("⚠️ Could not configure Git safe directory (not a git repo?)");
+        this.log("Could not configure Git safe directory (not a git repo?)", 'warning');
       }
 
       await this.runGitleaks(scanDir, reportPath, rulesPath);
@@ -283,7 +319,7 @@ tags = ["firebase", "apikey"]
       const filteredSecrets = Array.isArray(filtered)
         ? filtered.map(item => ({
             Description: item.Description,
-            File: `//////${item.File}`, // Add ////// prefix to match desired format
+            File: `//////${item.File}`,
             Match: item.Match,
             StartLine: String(item.StartLine),
             EndLine: String(item.EndLine),
@@ -297,17 +333,18 @@ tags = ["firebase", "apikey"]
       const durationSec = Math.floor((durationMs % 60000) / 1000);
       const durationStr = `${durationMin}min ${durationSec}s`;
 
-      core.info(`🔐 Secrets detected: ${Array.isArray(filtered) ? filtered.length : 0}`);
-      core.info(`⏰ Scan duration: ${durationStr}`);
+      this.log(`Secrets detected: ${Array.isArray(filtered) ? filtered.length : 0}`, 'info');
+      this.log(`Scan duration: ${durationStr}`, 'info');
 
       // Send secrets to API if found and PROJECT_ID is set
       if (filtered !== "No secrets detected." && Array.isArray(filtered) && filtered.length > 0) {
-        const projectId = process.env.PROJECT_ID;
+        // Use GitLab CI environment variable if PROJECT_ID not set
+        const projectId = process.env.PROJECT_ID || process.env.CI_PROJECT_ID;
         if (projectId) {
-          core.debug('Raw secrets data:', JSON.stringify(filtered, null, 2));
+          this.log(`Raw secrets data: ${JSON.stringify(filtered, null, 2)}`, 'debug');
           await this.sendSecretsToApi(projectId, filtered);
         } else {
-          core.warning('PROJECT_ID environment variable not set. Skipping API upload.');
+          this.log('PROJECT_ID environment variable not set. Skipping API upload.', 'warning');
         }
       }
 
@@ -318,14 +355,14 @@ tags = ["firebase", "apikey"]
           fs.unlinkSync(reportPath);
         }
       } catch (e) {
-        core.warning('Could not clean up temporary files');
+        this.log('Could not clean up temporary files', 'warning');
       }
 
       // Return results in the format expected by orchestrator
       const secretCount = Array.isArray(filtered) ? filtered.length : 0;
       return {
         total: secretCount,
-        critical: 0, // Secrets don't have severity levels like vulnerabilities
+        critical: 0,
         high: 0,
         medium: 0,
         low: 0,
@@ -334,7 +371,7 @@ tags = ["firebase", "apikey"]
         duration: durationStr
       };
     } catch (error) {
-      core.error(`❌ Secret detection scan failed: ${error.message}`);
+      this.log(`Secret detection scan failed: ${error.message}`, 'error');
       throw error;
     }
   }
