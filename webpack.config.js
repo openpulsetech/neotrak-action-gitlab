@@ -15,8 +15,10 @@ module.exports = {
     extensions: ['.js', '.json']
   },
   externals: {
-    // Bundle all dependencies for GitHub Actions deployment
-    // No external dependencies needed
+    // Do not bundle certain runtime-only modules. Marking them external
+    // avoids webpack trying to resolve Node-specific sub-files (like
+    // axios' internal utils) which can fail during bundling.
+    axios: 'commonjs axios'
   },
   optimization: {
     minimize: false
