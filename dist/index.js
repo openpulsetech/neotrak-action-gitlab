@@ -1022,9 +1022,7 @@ class NTUSecurityOrchestrator {
       try {
         this.info(`\n▶️  Running ${scanner.name}...`);
         const result = await scanner.scan(scanConfig);
-        this.log.info(`Raw result from ${scanner.name}: ${JSON.stringify(result, null, 2)}`, 'debug');
-        this.log.info(`result: `, result);
-
+        
         if (result) {
           this.aggregateResults(result);
           this.results.scannerResults.push({
@@ -1064,7 +1062,6 @@ class NTUSecurityOrchestrator {
     this.info(`   🟢 Low: ${this.results.low}`);
     this.info('='.repeat(50));
     
-    this.log('scan result:', this.results.scannerResults);
     // Display per-scanner breakdown
     if (this.results.scannerResults.length > 1) {
       this.info('\n📋 Scanner Breakdown:');
