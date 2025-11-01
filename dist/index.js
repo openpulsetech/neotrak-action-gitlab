@@ -1022,7 +1022,9 @@ class NTUSecurityOrchestrator {
       try {
         this.info(`\n▶️  Running ${scanner.name}...`);
         const result = await scanner.scan(scanConfig);
-        
+        this.log.info(`Raw result from ${scanner.name}: ${JSON.stringify(result, null, 2)}`, 'debug');
+        this.log.info(`result: `, result);
+
         if (result) {
           this.aggregateResults(result);
           this.results.scannerResults.push({
