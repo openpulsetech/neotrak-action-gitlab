@@ -803,7 +803,7 @@ class TrivyScanner {
   }
 }
 
-// Export singleton instance
+// Export singleton instance of TrivyScanner
 module.exports = new TrivyScanner();
 
 /***/ }),
