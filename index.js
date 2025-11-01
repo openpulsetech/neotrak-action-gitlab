@@ -140,11 +140,14 @@ class NTUSecurityOrchestrator {
       workspaceDir
     };
 
+    this.info(`Starting scans on target: ${resolvedTarget}`);
+    this.info('scanner confirmation', this.scanners.map(s => s.name).join(', '));
     for (const scanner of this.scanners) {
       try {
         this.info(`\n▶️  Running ${scanner.name}...`);
+        this.debug(`Scanner config: ${JSON.stringify(scanConfig, null, 2)}`);
         const result = await scanner.scan(scanConfig);
-        
+        this.debug(`Scanner result: ${JSON.stringify(result, null, 2)}`); 
         if (result) {
           this.aggregateResults(result);
           this.results.scannerResults.push({
