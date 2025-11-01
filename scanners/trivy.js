@@ -201,29 +201,42 @@ class TrivyScanner {
       
       args.push(scanTarget);
       
-      const command = `"${this.binaryPath || SCANNER_BINARY}" ${args.join(' ')}`;
-      this.info(`📝 Running: ${command}`);
+      core.info(`📝 Running: ${SCANNER_BINARY} ${args.join(' ')}`);
       
       // Execute scan
-      try {
-        execSync(command, {
-          cwd: path.dirname(scanTarget),
-          stdio: 'inherit',
-          env: process.env
-        });
-      } catch (execError) {
-        // Log but don't fail - we set --exit-code 0
-        this.warning(`Scan completed with warnings: ${execError.message}`);
+      let stdoutOutput = '';
+      let stderrOutput = '';
+      
+      const options = {
+        listeners: {
+          stdout: (data) => {
+            stdoutOutput += data.toString();
+          },
+          stderr: (data) => {
+            stderrOutput += data.toString();
+          }
+        },
+        ignoreReturnCode: true,
+        cwd: path.dirname(scanTarget)
+      };
+
+      const exitCode = await exec.exec(SCANNER_BINARY, args, options);
+      
+      core.info(`✅ Scan completed with exit code: ${exitCode}`);
+      
+      // Log any stderr (but not as error if exit code is 0)
+      if (stderrOutput && exitCode !== 0) {
+        core.warning(`Stderr output: ${stderrOutput}`);
       }
       
-      this.info(`✅ Scan completed`);
-      
       // Parse results
-      this.info(`📄 Reading results from: ${jsonOutputPath}`);
+      core.info(`📄 Reading results from: ${jsonOutputPath}`);
       
       // Check if file was created
       if (!fs.existsSync(jsonOutputPath)) {
-        this.error(`❌ Output file was not created: ${jsonOutputPath}`);
+        core.error(`❌ Output file was not created: ${jsonOutputPath}`);
+        core.error(`Stdout: ${stdoutOutput}`);
+        core.error(`Stderr: ${stderrOutput}`);
         throw new Error('Trivy did not produce output file');
       }
       
@@ -235,7 +248,7 @@ class TrivyScanner {
           fs.unlinkSync(jsonOutputPath);
         }
       } catch (cleanupError) {
-        this.debug(`Failed to cleanup temp file: ${cleanupError.message}`);
+        core.debug(`Failed to cleanup temp file: ${cleanupError.message}`);
       }
       
       return results;
