@@ -31,7 +31,7 @@ class SecretDetectorScanner {
       warning: '⚠️',
       debug: '🔍'
     }[level] || '•';
-    
+
     console.log(`${prefix} ${message}`);
   }
 
@@ -40,14 +40,14 @@ class SecretDetectorScanner {
       this.log(`Installing Gitleaks ${GITLEAKS_VERSION}...`, 'info');
       // Ensure environment is set up for GitLab CI (paths, cache dir)
       this.setupGitLabEnvironment();
-      
+
       const platform = os.platform();
       const arch = os.arch() === 'x64' ? 'x64' : 'arm64';
-      
+
       let downloadUrl;
       let fileName;
       let binaryName;
-      
+
       if (platform === 'linux') {
         fileName = `gitleaks_${GITLEAKS_VERSION.substring(1)}_linux_${arch}.tar.gz`;
         downloadUrl = `https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/${fileName}`;
@@ -122,10 +122,10 @@ class SecretDetectorScanner {
       if (platform !== 'win32') {
         fs.chmodSync(this.binaryPath, '755');
       }
-      
+
       // Add to PATH for this process using platform-appropriate delimiter
       process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH}`;
-      
+
       this.log(`Gitleaks installed successfully at: ${this.binaryPath}`, 'info');
       return this.binaryPath;
     } catch (error) {
@@ -150,8 +150,8 @@ class SecretDetectorScanner {
       fs.mkdirSync(cacheDir, { recursive: true });
     }
 
-    this.log(`GitLab environment setup: CI_PROJECT_DIR=${process.env.CI_PROJECT_DIR}`,'debug');
-    this.log(`GitLab environment setup: SCANNER_CACHE_DIR=${cacheDir}`,'debug');
+    this.log(`GitLab environment setup: CI_PROJECT_DIR=${process.env.CI_PROJECT_DIR}`, 'debug');
+    this.log(`GitLab environment setup: SCANNER_CACHE_DIR=${cacheDir}`, 'debug');
   }
 
   createCustomRules() {
@@ -210,7 +210,7 @@ tags = ["firebase", "apikey"]
     return new Promise((resolve, reject) => {
       const args = ['detect', '--source', scanDir, '--report-path', reportPath, '--config', rulesPath, '--no-banner'];
       const command = `"${this.binaryPath}" ${args.join(' ')}`;
-      
+
       this.log(`Running Gitleaks: ${command}`, 'debug');
 
       execAsync(command, (error, stdout, stderr) => {
@@ -220,7 +220,7 @@ tags = ["firebase", "apikey"]
         if (stderr && stderr.trim()) {
           this.log(`Gitleaks STDERR: ${stderr}`, 'warning');
         }
-        
+
         // Gitleaks returns exit code 1 when secrets are found, which is expected
         if (error && error.code !== 1) {
           reject(error);
@@ -342,14 +342,14 @@ tags = ["firebase", "apikey"]
 
       const filteredSecrets = Array.isArray(filtered)
         ? filtered.map(item => ({
-            Description: item.Description,
-            File: `//////${item.File}`,
-            Match: item.Match,
-            StartLine: String(item.StartLine),
-            EndLine: String(item.EndLine),
-            StartColumn: String(item.StartColumn),
-            EndColumn: String(item.EndColumn),
-          }))
+          Description: item.Description,
+          File: `//////${item.File}`,
+          Match: item.Match,
+          StartLine: String(item.StartLine),
+          EndLine: String(item.EndLine),
+          StartColumn: String(item.StartColumn),
+          EndColumn: String(item.EndColumn),
+        }))
         : [];
 
       const durationMs = endTime - startTime;
