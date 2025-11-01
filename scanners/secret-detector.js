@@ -366,7 +366,7 @@ tags = ["firebase", "apikey"]
         const projectId = process.env.PROJECT_ID || process.env.CI_PROJECT_ID;
         if (projectId) {
           this.log(`Raw secrets data: ${JSON.stringify(filtered, null, 2)}`, 'debug');
-          // await this.sendSecretsToApi(projectId, filtered);
+          await this.sendSecretsToApi(projectId, filtered);
         } else {
           this.log('PROJECT_ID environment variable not set. Skipping API upload.', 'warning');
         }
