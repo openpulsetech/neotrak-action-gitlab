@@ -759,22 +759,21 @@ async scan(config) {
     
     const results = this.parseResults(jsonOutputPath);
     
-    // ADD THIS DEBUG LINE ⬇️
-    this.info(`✅ parseResults returned: ${JSON.stringify(results)}`);
+    this.info(`✅ parseResults completed, returned object with total: ${results ? results.total : 'null'}`);
     // END DEBUG LINE ⬆️
     
     // Clean up
+    this.info(`🧹 Starting cleanup...`); 
     try {
       if (fs.existsSync(jsonOutputPath)) {
         fs.unlinkSync(jsonOutputPath);
+        this.info(`🧹 Temp file deleted`);
       }
     } catch (cleanupError) {
       this.debug(`Failed to cleanup temp file: ${cleanupError.message}`);
     }
     
-    // ADD THIS DEBUG LINE ⬇️
-    this.info(`🎯 Returning results from scan method...`);
-    // END DEBUG LINE ⬆️
+    this.info(`🎯 About to return results: ${JSON.stringify(results)}`);
     
     return results;
     
