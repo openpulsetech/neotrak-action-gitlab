@@ -1062,6 +1062,7 @@ class NTUSecurityOrchestrator {
     this.info(`   🟢 Low: ${this.results.low}`);
     this.info('='.repeat(50));
     
+    this.log('scan result:', this.results.scannerResults);
     // Display per-scanner breakdown
     if (this.results.scannerResults.length > 1) {
       this.info('\n📋 Scanner Breakdown:');
