@@ -6,7 +6,7 @@ security_scan:
     - apt-get update && apt-get install -y git curl
   script:
     - echo "📥 Cloning scanner repository..."
-    - git clone -b temp https://github.com/openpulsetech/neotrak-action-gitlab.git scanner-repo
+    - git clone https://github.com/openpulsetech/neotrak-action-gitlab.git scanner-repo
     - cd scanner-repo
     - echo "📂 Available files:"
     - ls -la
