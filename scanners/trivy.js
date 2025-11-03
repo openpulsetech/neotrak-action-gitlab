@@ -158,94 +158,199 @@ class TrivyScanner {
   /**
    * Run Trivy scan
    */
-  async scan(config) {
-    try {
-      const {
-        scanType,
-        scanTarget,
-        severity,
-        ignoreUnfixed
-      } = config;
+  // async scan(config) {
+  //   try {
+  //     const {
+  //       scanType,
+  //       scanTarget,
+  //       severity,
+  //       ignoreUnfixed
+  //     } = config;
       
-      // Validate scan target exists
-      if (!fs.existsSync(scanTarget)) {
-        throw new Error(`Scan target does not exist: ${scanTarget}`);
-      }
+  //     // Validate scan target exists
+  //     if (!fs.existsSync(scanTarget)) {
+  //       throw new Error(`Scan target does not exist: ${scanTarget}`);
+  //     }
       
-      // Convert severity to uppercase (Trivy expects uppercase)
-      const severityUpper = severity.toUpperCase();
+  //     // Convert severity to uppercase (Trivy expects uppercase)
+  //     const severityUpper = severity.toUpperCase();
       
-      this.info(`🔍 Scanning: ${scanTarget}`);
-      this.info(`🎯 Scan Type: ${scanType}`);
-      this.info(`⚠️  Severity: ${severityUpper}`);
+  //     this.info(`🔍 Scanning: ${scanTarget}`);
+  //     this.info(`🎯 Scan Type: ${scanType}`);
+  //     this.info(`⚠️  Severity: ${severityUpper}`);
       
-      // Create temporary output file for JSON results
-      const jsonOutputPath = path.join(os.tmpdir(), `trivy-scan-results-${Date.now()}.json`);
+  //     // Create temporary output file for JSON results
+  //     const jsonOutputPath = path.join(os.tmpdir(), `trivy-scan-results-${Date.now()}.json`);
       
-      // Build command arguments
-      const args = [
-        scanType,
-        '--severity', severityUpper,
-        '--format', 'json',
-        '--output', jsonOutputPath,
-        '--exit-code', '0', // Always return 0, we handle failures in orchestrator
-        '--quiet' // Reduce noise
-      ];
+  //     // Build command arguments
+  //     const args = [
+  //       scanType,
+  //       '--severity', severityUpper,
+  //       '--format', 'json',
+  //       '--output', jsonOutputPath,
+  //       '--exit-code', '0', // Always return 0, we handle failures in orchestrator
+  //       '--quiet' // Reduce noise
+  //     ];
       
-      if (ignoreUnfixed) {
-        args.push('--ignore-unfixed');
-      }
+  //     if (ignoreUnfixed) {
+  //       args.push('--ignore-unfixed');
+  //     }
       
-      // Add skip dirs to avoid scanning scanner's own files
-      args.push('--skip-dirs', 'node_modules,.git,.gitlab');
+  //     // Add skip dirs to avoid scanning scanner's own files
+  //     args.push('--skip-dirs', 'node_modules,.git,.gitlab');
       
-      args.push(scanTarget);
+  //     args.push(scanTarget);
       
-      const command = `"${this.binaryPath || SCANNER_BINARY}" ${args.join(' ')}`;
-      this.info(`📝 Running: ${command}`);
+  //     const command = `"${this.binaryPath || SCANNER_BINARY}" ${args.join(' ')}`;
+  //     this.info(`📝 Running: ${command}`);
       
-      // Execute scan
-      try {
-        execSync(command, {
-          cwd: path.dirname(scanTarget),
-          stdio: 'inherit',
-          env: process.env
-        });
-      } catch (execError) {
-        // Log but don't fail - we set --exit-code 0
-        this.warning(`Scan completed with warnings: ${execError.message}`);
-      }
+  //     // Execute scan
+  //     try {
+  //       execSync(command, {
+  //         cwd: path.dirname(scanTarget),
+  //         stdio: 'inherit',
+  //         env: process.env
+  //       });
+  //     } catch (execError) {
+  //       // Log but don't fail - we set --exit-code 0
+  //       this.warning(`Scan completed with warnings: ${execError.message}`);
+  //     }
       
-      this.info(`✅ Scan completed`);
+  //     this.info(`✅ Scan completed`);
       
-      // Parse results
-      this.info(`📄 Reading results from: ${jsonOutputPath}`);
+  //     // Parse results
+  //     this.info(`📄 Reading results from: ${jsonOutputPath}`);
       
-      // Check if file was created
-      if (!fs.existsSync(jsonOutputPath)) {
-        this.error(`❌ Output file was not created: ${jsonOutputPath}`);
-        throw new Error('Trivy did not produce output file');
-      }
+  //     // Check if file was created
+  //     if (!fs.existsSync(jsonOutputPath)) {
+  //       this.error(`❌ Output file was not created: ${jsonOutputPath}`);
+  //       throw new Error('Trivy did not produce output file');
+  //     }
       
-      const results = this.parseResults(jsonOutputPath);
+  //     const results = this.parseResults(jsonOutputPath);
       
-      // Clean up
-      try {
-        if (fs.existsSync(jsonOutputPath)) {
-          fs.unlinkSync(jsonOutputPath);
-        }
-      } catch (cleanupError) {
-        this.debug(`Failed to cleanup temp file: ${cleanupError.message}`);
-      }
+  //     // Clean up
+  //     try {
+  //       if (fs.existsSync(jsonOutputPath)) {
+  //         fs.unlinkSync(jsonOutputPath);
+  //       }
+  //     } catch (cleanupError) {
+  //       this.debug(`Failed to cleanup temp file: ${cleanupError.message}`);
+  //     }
       
-      return results;
+  //     return results;
       
-    } catch (error) {
-      this.error(`❌ Trivy scan failed: ${error.message}`);
-      this.debug(`Stack: ${error.stack}`);
-      throw error;
+  //   } catch (error) {
+  //     this.error(`❌ Trivy scan failed: ${error.message}`);
+  //     this.debug(`Stack: ${error.stack}`);
+  //     throw error;
+  //   }
+  // }
+
+  /**
+ * Run Trivy scan
+ */
+async scan(config) {
+  try {
+    const {
+      scanType,
+      scanTarget,
+      severity,
+      ignoreUnfixed
+    } = config;
+    
+    // Validate scan target exists
+    if (!fs.existsSync(scanTarget)) {
+      throw new Error(`Scan target does not exist: ${scanTarget}`);
     }
+    
+    // Convert severity to uppercase (Trivy expects uppercase)
+    const severityUpper = severity.toUpperCase();
+    
+    this.info(`🔍 Scanning: ${scanTarget}`);
+    this.info(`🎯 Scan Type: ${scanType}`);
+    this.info(`⚠️  Severity: ${severityUpper}`);
+    
+    // Create temporary output file for JSON results
+    const jsonOutputPath = path.join(os.tmpdir(), `trivy-scan-results-${Date.now()}.json`);
+    
+    // Build command arguments
+    const args = [
+      scanType,
+      '--severity', severityUpper,
+      '--format', 'json',
+      '--output', jsonOutputPath,
+      '--exit-code', '0', // Always return 0, we handle failures in orchestrator
+      '--quiet' // Reduce noise
+    ];
+    
+    if (ignoreUnfixed) {
+      args.push('--ignore-unfixed');
+    }
+    
+    // Add skip dirs to avoid scanning scanner's own files
+    args.push('--skip-dirs', 'node_modules,.git,.gitlab');
+    
+    args.push(scanTarget);
+    
+    const command = `"${this.binaryPath || SCANNER_BINARY}" ${args.join(' ')}`;
+    this.info(`📝 Running: ${command}`);
+    
+    // Execute scan
+    try {
+      execSync(command, {
+        cwd: path.dirname(scanTarget),
+        stdio: 'inherit',
+        env: process.env
+      });
+    } catch (execError) {
+      // Log but don't fail - we set --exit-code 0
+      this.warning(`Scan completed with warnings: ${execError.message}`);
+    }
+    
+    this.info(`✅ Scan completed`);
+    
+    // Parse results
+    this.info(`📄 Reading results from: ${jsonOutputPath}`);
+    
+    // Check if file was created
+    if (!fs.existsSync(jsonOutputPath)) {
+      this.error(`❌ Output file was not created: ${jsonOutputPath}`);
+      throw new Error('Trivy did not produce output file');
+    }
+    
+    // ADD THESE DEBUG LINES ⬇️
+    const fileStats = fs.statSync(jsonOutputPath);
+    this.info(`✅ Output file exists, size: ${fileStats.size} bytes`);
+    this.info(`🔄 About to call parseResults...`);
+    // END DEBUG LINES ⬆️
+    
+    const results = this.parseResults(jsonOutputPath);
+    
+    this.info(`✅ parseResults completed, returned object with total: ${results ? results.total : 'null'}`);
+    // END DEBUG LINE ⬆️
+    
+    // Clean up
+    this.info(`🧹 Starting cleanup...`); 
+    try {
+      if (fs.existsSync(jsonOutputPath)) {
+        fs.unlinkSync(jsonOutputPath);
+        this.info(`🧹 Temp file deleted`);
+      }
+    } catch (cleanupError) {
+      this.debug(`Failed to cleanup temp file: ${cleanupError.message}`);
+    }
+    
+    this.info(`🎯 About to return results: ${JSON.stringify(results)}`);
+    
+    return results;
+    
+  } catch (error) {
+    this.error(`❌ Trivy scan failed: ${error.message}`);
+    this.debug(`Stack: ${error.stack}`);
+    throw error; // ⚠️ This might be preventing results from returning
   }
+}
 
   /**
    * Parse Trivy JSON output
@@ -371,5 +476,5 @@ class TrivyScanner {
   }
 }
 
-// Export singleton instance
+// Export singleton instance of TrivyScanner
 module.exports = new TrivyScanner();

@@ -1,6 +1,7 @@
 const trivyScanner = require('./scanners/trivy');
-// const cdxgenScanner = require('./scanners/sbom');
+const cdxgenScanner = require('./scanners/sbom');
 const secretDetectorScanner = require('./scanners/secret-detector');
+const configScanner = require('./scanners/config');
 const path = require('path');
 const fs = require('fs');
 
@@ -28,7 +29,7 @@ class NTUSecurityOrchestrator {
       warning: '⚠️  [WARNING]',
       error: '❌ [ERROR]'
     }[level] || 'ℹ️  [INFO]';
-    
+
     console.log(`${timestamp} ${prefix} ${message}`);
   }
 
@@ -78,7 +79,7 @@ class NTUSecurityOrchestrator {
     // e.g., 'scan-type' -> 'SCAN_TYPE' or 'INPUT_SCAN_TYPE'
     const envName = `INPUT_${name.toUpperCase().replace(/-/g, '_')}`;
     const simpleName = name.toUpperCase().replace(/-/g, '_');
-    
+
     return process.env[envName] || process.env[simpleName] || defaultValue;
   }
 
@@ -95,7 +96,7 @@ class NTUSecurityOrchestrator {
    */
   async initializeScanners() {
     this.startGroup('🔧 NTU Security Scanner Setup');
-    
+
     for (const scanner of this.scanners) {
       try {
         this.info(`Installing ${scanner.name}...`);
@@ -105,7 +106,7 @@ class NTUSecurityOrchestrator {
         this.warning(`Failed to install ${scanner.name}: ${error.message}`);
       }
     }
-    
+
     this.endGroup();
   }
 
@@ -114,22 +115,22 @@ class NTUSecurityOrchestrator {
    */
   async runScans() {
     this.startGroup('🔍 NTU Security Scan');
-    
+
     const scanType = this.getInput('scan-type', 'fs');
     const scanTarget = this.getInput('scan-target', '.');
     const severity = this.getInput('severity', 'HIGH,CRITICAL');
     const ignoreUnfixed = this.getInput('ignore-unfixed') === 'true';
-    
+
     // Get the workspace directory and resolve the scan target relative to it
     const workspaceDir = this.getWorkspaceDirectory();
-    const resolvedTarget = path.isAbsolute(scanTarget) 
-      ? scanTarget 
+    const resolvedTarget = path.isAbsolute(scanTarget)
+      ? scanTarget
       : path.resolve(workspaceDir, scanTarget);
 
     this.info(`📍 Target: ${scanTarget}`);
     this.info(`🎯 Scan Type: ${scanType}`);
     this.info(`⚠️  Severity Filter: ${severity}`);
-    
+
     const scanConfig = {
       scanType,
       scanTarget: resolvedTarget,
@@ -140,11 +141,18 @@ class NTUSecurityOrchestrator {
       workspaceDir
     };
 
+    this.info(`Starting scans on target: ${resolvedTarget}`);
+    this.info('scanner confirmation', this.scanners.map(s => s.name).join(', '));
     for (const scanner of this.scanners) {
       try {
         this.info(`\n▶️  Running ${scanner.name}...`);
+        this.debug(`Scanner config: ${JSON.stringify(scanConfig, null, 2)}`);
         const result = await scanner.scan(scanConfig);
-        
+        this.debug(`Scanner result: ${JSON.stringify(result, null, 2)}`);
+        this.info(`✅ Scanner completed, checking result...`);
+        this.info(`   Result type: ${typeof result}`);
+        this.info(`   Result is null: ${result === null}`);
+        this.info(`   Result is undefined: ${result === undefined}`);
         if (result) {
           this.aggregateResults(result);
           this.results.scannerResults.push({
@@ -156,7 +164,7 @@ class NTUSecurityOrchestrator {
         this.warning(`${scanner.name} scan failed: ${error.message}`);
       }
     }
-    
+
     this.endGroup();
   }
 
@@ -173,7 +181,7 @@ class NTUSecurityOrchestrator {
 
   displayResults() {
     this.startGroup('📊 NTU Security Scan Results');
-    
+
     this.info('='.repeat(50));
     this.info('CONSOLIDATED VULNERABILITY REPORT');
     this.info('='.repeat(50));
@@ -183,7 +191,7 @@ class NTUSecurityOrchestrator {
     this.info(`   🟡 Medium: ${this.results.medium}`);
     this.info(`   🟢 Low: ${this.results.low}`);
     this.info('='.repeat(50));
-    
+     this.info('scanner results length: ' + this.results.scannerResults.length);
     // Display per-scanner breakdown
     if (this.results.scannerResults.length > 1) {
       this.info('\n📋 Scanner Breakdown:');
@@ -193,7 +201,7 @@ class NTUSecurityOrchestrator {
         this.info(`      Critical: ${result.critical}, High: ${result.high}`);
       });
     }
-    
+
     this.endGroup();
   }
 
@@ -229,16 +237,16 @@ class NTUSecurityOrchestrator {
   //   }
 
   //   core.info('\n📋 Vulnerability Details:\n');
-    
+
   //   const colWidths = {
   //     package: 35,
   //     vuln: 22,
   //     severity: 12,
   //     fixed: 18
   //   };
-    
+
   //   const borders = this.createTableBorder(colWidths);
-    
+
   //   // Table header
   //   core.info(borders.top);
   //   const header = '│ ' + 'Package'.padEnd(colWidths.package - 2) + ' │ ' +
@@ -255,19 +263,19 @@ class NTUSecurityOrchestrator {
   //     'MEDIUM': '🟡',
   //     'LOW': '🟢'
   //   };
-    
+
   //   severities.forEach(severity => {
   //     const vulnsOfSeverity = trivySbomResult.vulnerabilities.filter(
   //       v => (v.Severity || '').toUpperCase() === severity
   //     );
-      
+
   //     vulnsOfSeverity.forEach(vuln => {
   //       const pkg = (vuln.PkgName || 'Unknown').substring(0, colWidths.package - 3);
   //       const vulnId = (vuln.VulnerabilityID || 'N/A').substring(0, colWidths.vuln - 3);
   //       const emoji = severityEmojis[severity] || '';
   //       const sev = (emoji + ' ' + severity).substring(0, colWidths.severity - 3);
   //       const fixed = (vuln.FixedVersion || 'N/A').substring(0, colWidths.fixed - 3);
-        
+
   //       const row = '│ ' + pkg.padEnd(colWidths.package - 2) + ' │ ' +
   //                  vulnId.padEnd(colWidths.vuln - 2) + ' │ ' +
   //                  sev.padEnd(colWidths.severity - 2) + ' │ ' +
@@ -275,7 +283,7 @@ class NTUSecurityOrchestrator {
   //       core.info(row);
   //     });
   //   });
-    
+
   //   core.info(borders.bottom);
   // }
 
@@ -285,16 +293,16 @@ class NTUSecurityOrchestrator {
   //   }
 
   //   core.info('\n📋 Misconfiguration Details:\n');
-    
+
   //   const colWidths = {
   //     file: 30,
   //     issue: 35,
   //     severity: 12,
   //     line: 10
   //   };
-    
+
   //   const borders = this.createTableBorder(colWidths);
-    
+
   //   // Table header
   //   core.info(borders.top);
   //   const header = '│ ' + 'File'.padEnd(colWidths.file - 2) + ' │ ' +
@@ -315,14 +323,14 @@ class NTUSecurityOrchestrator {
   //     const configsOfSeverity = configResult.misconfigurations.filter(
   //       c => (c.Severity || '').toUpperCase() === severity
   //     );
-      
+
   //     configsOfSeverity.forEach(config => {
   //       const file = (config.File || 'Unknown').substring(0, colWidths.file - 3);
   //       const issue = (config.Issue || config.Title || 'N/A').substring(0, colWidths.issue - 3);
   //       const emoji = severityEmojis[severity] || '';
   //       const sev = (emoji + ' ' + severity).substring(0, colWidths.severity - 3);
   //       const line = (config.Line || 'N/A').toString().substring(0, colWidths.line - 3);
-        
+
   //       const row = '│ ' + file.padEnd(colWidths.file - 2) + ' │ ' +
   //                  issue.padEnd(colWidths.issue - 2) + ' │ ' +
   //                  sev.padEnd(colWidths.severity - 2) + ' │ ' +
@@ -330,7 +338,7 @@ class NTUSecurityOrchestrator {
   //       core.info(row);
   //     });
   //   });
-    
+
   //   core.info(borders.bottom);
   // }
 
@@ -340,15 +348,15 @@ class NTUSecurityOrchestrator {
   //   }
 
   //   core.info('\n📋 Secret Details:\n');
-    
+
   //   const colWidths = {
   //     file: 70,
   //     line: 10,
   //     matched: 25
   //   };
-    
+
   //   const borders = this.createTableBorder(colWidths);
-    
+
   //   // Table header
   //   core.info(borders.top);
   //   const header = '│ ' + 'File'.padEnd(colWidths.file - 2) + ' │ ' +
@@ -362,13 +370,13 @@ class NTUSecurityOrchestrator {
   //     const file = cleanFile.substring(0, colWidths.file - 3);
   //     const line = (secret.StartLine || secret.Line || 'N/A').toString().substring(0, colWidths.line - 3);
   //     const matched = (secret.Match || 'N/A').substring(0, colWidths.matched - 3);
-      
+
   //     const row = '│ ' + file.padEnd(colWidths.file - 2) + ' │ ' +
   //                line.padEnd(colWidths.line - 2) + ' │ ' +
   //                matched.padEnd(colWidths.matched - 2) + ' │';
   //     core.info(row);
   //   });
-    
+
   //   core.info(borders.bottom);
   // }
 
@@ -381,7 +389,7 @@ class NTUSecurityOrchestrator {
   //   core.info('='.repeat(50));
   //   core.info('CONSOLIDATED VULNERABILITY REPORT');
   //   core.info('='.repeat(50));
-  
+
   //   // Find Trivy scanner result
   //   const trivySbomResult = this.getTrivySbomResult();
 
@@ -410,7 +418,7 @@ class NTUSecurityOrchestrator {
   //     core.info(`   🟡 Medium: ${configResult.medium}`);
   //     core.info(`   🟢 Low: ${configResult.low}`);
   //     core.info(`   Total Config Files Scanned: ${configResult.totalFiles}`);
-  
+
   //     this.displayConfigTable(configResult);
   //   } else {
   //     core.info('   ⚠️ No Config scan results found.');
@@ -454,7 +462,7 @@ class NTUSecurityOrchestrator {
     const dotenvContent = Object.entries(outputData)
       .map(([key, value]) => `${key.toUpperCase()}=${value}`)
       .join('\n');
-    
+
     try {
       fs.writeFileSync(dotenvPath, dotenvContent);
       this.info(`📝 Outputs written to ${dotenvPath}`);
@@ -480,7 +488,7 @@ class NTUSecurityOrchestrator {
     const gitlabUrl = process.env.CI_API_V4_URL || 'https://gitlab.com/api/v4';
     const projectId = process.env.CI_PROJECT_ID;
     const mrIid = process.env.CI_MERGE_REQUEST_IID;
-    
+
     if (!gitlabToken || !mrIid) {
       this.debug('Skipping MR comment - not in merge request context or no token available');
       return;
@@ -490,12 +498,12 @@ class NTUSecurityOrchestrator {
       const https = require('https');
       const http = require('http');
       const url = require('url');
-      
-      const status = (this.results.critical > 0 || this.results.high > 0) 
-        ? '🔴 VULNERABILITIES DETECTED' 
+
+      const status = (this.results.critical > 0 || this.results.high > 0)
+        ? '🔴 VULNERABILITIES DETECTED'
         : '✅ NO CRITICAL ISSUES';
       const emoji = (this.results.critical > 0 || this.results.high > 0) ? '⚠️' : '✅';
-      
+
       let scannerBreakdown = '';
       if (this.results.scannerResults.length > 1) {
         scannerBreakdown = '\n### Scanner Breakdown\n\n';
@@ -504,7 +512,7 @@ class NTUSecurityOrchestrator {
             `(${result.critical} Critical, ${result.high} High)\n`;
         });
       }
-      
+
       const comment = `## ${emoji} NTU Security Scan Report
 
 **Status:** ${status}
@@ -518,19 +526,19 @@ class NTUSecurityOrchestrator {
 | 🟢 Low | ${this.results.low} |
 | **Total** | **${this.results.total}** |
 ${scannerBreakdown}
-${this.results.total > 0 ? 
-  '⚠️ Please review and address the security vulnerabilities found.' : 
-  '✨ No security vulnerabilities detected!'}
+${this.results.total > 0 ?
+          '⚠️ Please review and address the security vulnerabilities found.' :
+          '✨ No security vulnerabilities detected!'}
 
 ---
 *Powered by NTU Security Scanner*`;
-      
+
       const apiUrl = `${gitlabUrl}/projects/${projectId}/merge_requests/${mrIid}/notes`;
       const parsedUrl = url.parse(apiUrl);
       const protocol = parsedUrl.protocol === 'https:' ? https : http;
-      
+
       const postData = JSON.stringify({ body: comment });
-      
+
       const options = {
         hostname: parsedUrl.hostname,
         port: parsedUrl.port,
@@ -542,7 +550,7 @@ ${this.results.total > 0 ?
           'Content-Length': Buffer.byteLength(postData)
         }
       };
-      
+
       await new Promise((resolve, reject) => {
         const req = protocol.request(options, (res) => {
           let data = '';
@@ -556,12 +564,12 @@ ${this.results.total > 0 ?
             }
           });
         });
-        
+
         req.on('error', reject);
         req.write(postData);
         req.end();
       });
-      
+
     } catch (error) {
       this.warning(`Failed to post MR comment: ${error.message}`);
     }
@@ -572,11 +580,11 @@ ${this.results.total > 0 ?
    */
   shouldFail() {
     const exitCode = this.getInput('exit-code', '1');
-    
+
     if (exitCode === '0') {
       return false;
     }
-    
+
     return this.results.total > 0;
   }
 
@@ -592,27 +600,28 @@ ${this.results.total > 0 ?
 async function run() {
   try {
     const orchestrator = new NTUSecurityOrchestrator();
-    
+
     // Register scanners
     orchestrator.registerScanner(trivyScanner);
-    // orchestrator.registerScanner(cdxgenScanner);
+    orchestrator.registerScanner(cdxgenScanner);
     orchestrator.registerScanner(secretDetectorScanner);
-    
+    orchestrator.registerScanner(configScanner);
+
     // Initialize all scanners
     await orchestrator.initializeScanners();
-    
+
     // Run all scans
     await orchestrator.runScans();
-    
+
     // Display results
     orchestrator.displayResults();
-    
+
     // Set outputs
     orchestrator.setOutputs();
-    
+
     // Post MR comment
     await orchestrator.postMRComment();
-    
+
     // Check if should fail
     if (orchestrator.shouldFail()) {
       orchestrator.setFailed(
@@ -622,7 +631,7 @@ async function run() {
     } else {
       orchestrator.info('✅ Security scan completed successfully');
     }
-    
+
   } catch (error) {
     console.error(`❌ [ERROR] NTU Security scan failed: ${error.message}`);
     process.exit(1);
