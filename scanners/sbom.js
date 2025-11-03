@@ -1,4 +1,3 @@
-const execSync = require('child_process').execSync;
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
@@ -10,6 +9,31 @@ const trivyScanner = require('./trivy');
 const CDXGEN_PACKAGE = '@cyclonedx/cdxgen';
 const CDXGEN_VERSION = '11.9.0';
 const CDXGEN_BINARY = 'cdxgen';
+
+// Promisified exec function that returns exit code and output
+const execWithExitCode = async (command, args, options) => {
+  return new Promise((resolve, reject) => {
+    const child = exec(command + ' ' + args.join(' '), options);
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data;
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data;
+    });
+
+    child.on('close', (code) => {
+      resolve({ code, stdout, stderr });
+    });
+
+    child.on('error', (err) => {
+      reject(err);
+    });
+  });
+};
 
 class CdxgenScanner {
   constructor() {
@@ -47,13 +71,16 @@ class CdxgenScanner {
       }
 
       // Install cdxgen locally with specific version
-      try {
-        execSync(`npm install ${CDXGEN_PACKAGE}@${CDXGEN_VERSION}`, {
-          cwd: installDir,
-          stdio: ['ignore', 'ignore', 'pipe'] // Suppress output but show errors
-        });
-      } catch (error) {
-        throw new Error(`npm install failed: ${error.message}`);
+      const { code, stderr } = await execWithExitCode('npm', ['install', `${CDXGEN_PACKAGE}@${CDXGEN_VERSION}`], {
+        cwd: installDir,
+        env: {
+          ...process.env,
+          NODE_OPTIONS: '--openssl-legacy-provider --experimental-global-webcrypto'
+        }
+      });
+
+      if (code !== 0) {
+        throw new Error(`npm install failed with exit code: ${code}\n${stderr}`);
       }
 
       // Find the installed binary
