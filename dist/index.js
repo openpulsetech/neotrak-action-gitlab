@@ -27,7 +27,6 @@ const execAsync = promisify(exec);
 const os = __webpack_require__(857);
 const fs = __webpack_require__(896);
 const path = __webpack_require__(928);
-
 const trivyScanner = __webpack_require__(513);
 
 const CDXGEN_PACKAGE = '@cyclonedx/cdxgen';
