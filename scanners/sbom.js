@@ -139,26 +139,26 @@ class CdxgenScanner {
         targetDirectory
       ];
 
-      const command = `${this.binaryPath} ${args.join(' ')}`;
-      this.log(`📝 Running: ${command}`);
+      this.log(`📝 Running CDXgen...`);
       this.log(`📄 Expected output file: ${fullOutputPath}`);
 
-      let stdout = '';
-      let stderr = '';
-
       try {
-        // Capture output to see what CDXgen is doing
-        const result = execSync(command, {
-          cwd: targetDirectory,
-          encoding: 'utf8',
-          maxBuffer: 10 * 1024 * 1024
-        });
-        stdout = result;
-      } catch (error) {
-        // CDXgen might exit with non-zero code but still generate output
-        stderr = error.stderr || '';
-        stdout = error.stdout || '';
-        this.log(`⚠️  CDXgen exited with code: ${error.status}`);
+        // Run CDXgen with all arguments
+        const { code, stdout, stderr } = await execWithExitCode(
+          this.binaryPath,
+          args,
+          {
+            cwd: targetDirectory,
+            env: {
+              ...process.env,
+              NODE_OPTIONS: '--openssl-legacy-provider --experimental-global-webcrypto'
+            }
+          }
+        );
+
+        if (code !== 0) {
+          this.log(`⚠️  CDXgen exited with code: ${code}`);
+        }
         
         if (stdout && stdout.trim()) {
           this.log(`📤 CDXgen stdout:\n${stdout.substring(0, 1000)}`);
@@ -166,9 +166,12 @@ class CdxgenScanner {
         if (stderr && stderr.trim()) {
           this.log(`📤 CDXgen stderr:\n${stderr.substring(0, 1000)}`);
         }
-      }
 
-      this.log(`✅ SBOM generation completed`);
+        this.log(`✅ SBOM generation completed`);
+      } catch (error) {
+        this.logError(`❌ CDXgen execution failed: ${error.message}`);
+        // Continue execution to check if the file was created despite the error
+      }
       
       // List directory again to see if any file was created
       this.log(`📂 Directory contents after CDXgen:`);
