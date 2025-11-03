@@ -1,6 +1,6 @@
-const { exec } = require('child_process');
-const { promisify } = require('util');
-const execAsync = promisify(exec);
+const core = require('@actions/core');
+const exec = require('@actions/exec');
+const tc = require('@actions/tool-cache');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
@@ -10,31 +10,6 @@ const CDXGEN_PACKAGE = '@cyclonedx/cdxgen';
 const CDXGEN_VERSION = '11.9.0';
 const CDXGEN_BINARY = 'cdxgen';
 
-// Promisified exec function that returns exit code and output
-const execWithExitCode = async (command, args, options) => {
-  return new Promise((resolve, reject) => {
-    const child = exec(command + ' ' + args.join(' '), options);
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (data) => {
-      stdout += data;
-    });
-
-    child.stderr.on('data', (data) => {
-      stderr += data;
-    });
-
-    child.on('close', (code) => {
-      resolve({ code, stdout, stderr });
-    });
-
-    child.on('error', (err) => {
-      reject(err);
-    });
-  });
-};
-
 class CdxgenScanner {
   constructor() {
     this.name = 'CDXgen SBOM Generator';
@@ -42,28 +17,10 @@ class CdxgenScanner {
     this.trivyBinaryPath = null;
   }
 
-  log(message) {
-    console.log(message);
-  }
-
-  logWarning(message) {
-    console.warn(`WARNING: ${message}`);
-  }
-
-  logError(message) {
-    console.error(`ERROR: ${message}`);
-  }
-
-  logDebug(message) {
-    if (process.env.DEBUG === 'true' || process.env.CI_DEBUG_TRACE === 'true') {
-      console.log(`DEBUG: ${message}`);
-    }
-  }
-
   async install() {
     try {
       const installDir = path.join(os.tmpdir(), 'cdxgen-install');
-      this.log(`📦 Installing ${CDXGEN_PACKAGE}@${CDXGEN_VERSION}...`);
+      core.info(`📦 Installing ${CDXGEN_PACKAGE}@${CDXGEN_VERSION}...`);
 
       // Create temporary install directory
       if (!fs.existsSync(installDir)) {
@@ -71,16 +28,12 @@ class CdxgenScanner {
       }
 
       // Install cdxgen locally with specific version
-      const { code, stderr } = await execWithExitCode('npm', ['install', `${CDXGEN_PACKAGE}@${CDXGEN_VERSION}`], {
-        cwd: installDir,
-        env: {
-          ...process.env,
-          NODE_OPTIONS: '--openssl-legacy-provider --experimental-global-webcrypto'
-        }
+      const exitCode = await exec.exec('npm', ['install', `${CDXGEN_PACKAGE}@${CDXGEN_VERSION}`], {
+        cwd: installDir
       });
 
-      if (code !== 0) {
-        throw new Error(`npm install failed with exit code: ${code}\n${stderr}`);
+      if (exitCode !== 0) {
+        throw new Error(`npm install failed with exit code: ${exitCode}`);
       }
 
       // Find the installed binary
@@ -95,7 +48,7 @@ class CdxgenScanner {
         fs.chmodSync(binaryPath, '755');
       }
 
-      this.log(`✅ ${CDXGEN_BINARY} installed successfully at: ${binaryPath}`);
+      core.info(`✅ ${CDXGEN_BINARY} installed successfully at: ${binaryPath}`);
       this.binaryPath = binaryPath;
       return binaryPath;
     } catch (error) {
@@ -109,114 +62,62 @@ class CdxgenScanner {
         throw new Error(`Target directory does not exist: ${targetDirectory}`);
       }
 
-      const outputFilePath = path.join(targetDirectory, 'sbom.json');
+      const outputFilePath = path.join(targetDirectory, `sbom.json`);
       const fullOutputPath = path.resolve(outputFilePath);
-      
-      this.log(`🔍 Generating SBOM for: ${targetDirectory}`);
-      this.log(`📂 Target directory contents:`);
-      
-      // List all files in the target directory
-      try {
-        const files = fs.readdirSync(targetDirectory);
-        if (files.length === 0) {
-          this.log(`   ⚠️  Directory is empty!`);
-        } else {
-          files.forEach(file => {
-            const filePath = path.join(targetDirectory, file);
-            const stats = fs.statSync(filePath);
-            const type = stats.isDirectory() ? '[DIR]' : '[FILE]';
-            this.log(`   ${type} ${file}`);
-          });
-        }
-      } catch (err) {
-        this.logError(`   Failed to list directory: ${err.message}`);
-      }
+      core.info(`🔍 Generating SBOM for: ${targetDirectory}`);
 
       const args = [
         '--spec-version', '1.4',
-        '--deep',                       // Scan subdirectories
+        '--deep',
         '--output', outputFilePath,
         targetDirectory
       ];
+      core.info(`📝 Running: ${this.binaryPath} ${args.join(' ')}`);
 
-      this.log(`📝 Running CDXgen...`);
-      this.log(`📄 Expected output file: ${fullOutputPath}`);
+      let stdoutOutput = '';
+      let stderrOutput = '';
 
-      try {
-        // Run CDXgen with all arguments
-        const { code, stdout, stderr } = await execWithExitCode(
-          this.binaryPath,
-          args,
-          {
-            cwd: targetDirectory,
-            env: {
-              ...process.env,
-              NODE_OPTIONS: '--openssl-legacy-provider --experimental-global-webcrypto'
-            }
-          }
-        );
+      const options = {
+        listeners: {
+          stdout: (data) => { stdoutOutput += data.toString(); },
+          stderr: (data) => { stderrOutput += data.toString(); }
+        },
+        ignoreReturnCode: true,
+        cwd: targetDirectory
+      };
 
-        if (code !== 0) {
-          this.log(`⚠️  CDXgen exited with code: ${code}`);
-        }
-        
-        if (stdout && stdout.trim()) {
-          this.log(`📤 CDXgen stdout:\n${stdout.substring(0, 1000)}`);
-        }
-        if (stderr && stderr.trim()) {
-          this.log(`📤 CDXgen stderr:\n${stderr.substring(0, 1000)}`);
-        }
+      const exitCode = await exec.exec(this.binaryPath, args, options);
 
-        this.log(`✅ SBOM generation completed`);
-      } catch (error) {
-        this.logError(`❌ CDXgen execution failed: ${error.message}`);
-        // Continue execution to check if the file was created despite the error
-      }
-      
-      // List directory again to see if any file was created
-      this.log(`📂 Directory contents after CDXgen:`);
-      try {
-        const filesAfter = fs.readdirSync(targetDirectory);
-        filesAfter.forEach(file => {
-          if (file.includes('sbom') || file.includes('bom') || file.includes('cdx')) {
-            this.log(`   🎯 ${file} (possible SBOM file)`);
-          }
-        });
-      } catch (err) {
-        this.logError(`   Failed to list directory: ${err.message}`);
-      }
+      core.info(`✅ SBOM generation completed with exit code: ${exitCode}`);
 
       if (!fs.existsSync(fullOutputPath)) {
-        this.logError(`❌ Output file not created: ${fullOutputPath}`);
+        core.error(`❌ Output file not created: ${fullOutputPath}`);
+        core.error(`Stdout: ${stdoutOutput}`);
+        core.error(`Stderr: ${stderrOutput}`);
         throw new Error('CDXgen did not generate SBOM output file');
       }
 
       return fullOutputPath;
     } catch (error) {
-      this.logError(`❌ CDXgen SBOM generation failed: ${error.message}`);
+      console.error(`❌ CDXgen SBOM generation failed: ${error.message}`);
       throw error;
     }
   }
 
-  /**
-   * Required by orchestrator
-   */
   async scan(config) {
     try {
       const targetDir = config.scanTarget || '.';
-
-      // Uncomment the next line to force generateSBOM to fail
-      // throw new Error('Forced error to test fallback');
-
       const sbomPath = await this.generateSBOM(targetDir);
-      this.log(`📦 SBOM generated: ${sbomPath}`);
+
+      core.info(`📦 SBOM generated: ${sbomPath}`);
     
-      // Ensure Trivy is installed
       if (!trivyScanner.binaryPath) {
-        this.log('🔧 Trivy not found, installing Trivy scanner in sbom...');
+        core.info('🔧 Trivy not found, installing Trivy scanner in sbom...');
         await trivyScanner.install();
       }
       this.trivyBinaryPath = trivyScanner.binaryPath;
+
+      let stdoutData = '';
 
       const trivyArgs = [
         'sbom',
@@ -225,28 +126,18 @@ class CdxgenScanner {
         sbomPath
       ];
 
-      const command = `${this.trivyBinaryPath} ${trivyArgs.join(' ')}`;
-      console.log(`🛠️ Using Trivy binary at: ${this.trivyBinaryPath}`);
-      // console.log(`🧩 Running command: trivy ${trivyArgs.join(' ')}`);
+      core.info(`🛠️ Using Trivy binary at: ${this.trivyBinaryPath}`);
 
-      let stdoutData = '';
-
-      try {
-        const { stdout } = await execAsync(command, {
-          maxBuffer: 10 * 1024 * 1024,
-          encoding: 'utf8'
-        });
-        stdoutData = stdout;
-      } catch (error) {
-        // Trivy might return non-zero exit code even with valid results
-        stdoutData = error.stdout || '';
-        if (!stdoutData) {
-          throw error;
-        }
-      }
+      await exec.exec(this.trivyBinaryPath, trivyArgs, {
+        ignoreReturnCode: true,
+        listeners: {
+          stdout: (data) => { stdoutData += data.toString(); }
+        },
+        stderr: 'pipe'
+      });
 
       if (stdoutData.trim() === '') {
-        this.logWarning('⚠️  No vulnerabilities found');
+        core.warning('⚠️  No vulnerabilities found');
         return {
           total: 0,
           critical: 0,
@@ -272,12 +163,12 @@ class CdxgenScanner {
         }
       });
 
-      this.log(`📊 Vulnerability Summary:`);
-      this.log(`   CRITICAL: ${countBySeverity.CRITICAL}`);
-      this.log(`   HIGH:     ${countBySeverity.HIGH}`);
-      this.log(`   MEDIUM:   ${countBySeverity.MEDIUM}`);
-      this.log(`   LOW:      ${countBySeverity.LOW}`);
-      this.log(`   TOTAL:    ${vulns.length}`);
+      core.info(`📊 Vulnerability Summary:`);
+      core.info(`   CRITICAL: ${countBySeverity.CRITICAL}`);
+      core.info(`   HIGH:     ${countBySeverity.HIGH}`);
+      core.info(`   MEDIUM:   ${countBySeverity.MEDIUM}`);
+      core.info(`   LOW:      ${countBySeverity.LOW}`);
+      core.info(`   TOTAL:    ${vulns.length}`);
 
       return {
         total: vulns.length,
@@ -290,18 +181,21 @@ class CdxgenScanner {
       };
 
     } catch (error) {
-      this.logError(`❌ Scan failed: ${error.message}`);
-      // throw error;
-      this.log('➡️ Falling back to Trivy scanner...');
-
-      // Fallback: call trivy.js scanner directly
+      core.error(`❌ Scan failed: ${error.message}`);
+      core.info('➡️ Falling back to Trivy scanner...');
       return await trivyScanner.scan(config);
     }
   }
-
 }
 
 module.exports = new CdxgenScanner();
+
+
+
+
+
+
+
 
 // const execSync = require('child_process').execSync;
 // const { exec } = require('child_process');
