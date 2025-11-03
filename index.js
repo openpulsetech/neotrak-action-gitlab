@@ -1,6 +1,7 @@
 const trivyScanner = require('./scanners/trivy');
 // const cdxgenScanner = require('./scanners/sbom');
 const secretDetectorScanner = require('./scanners/secret-detector');
+const configScanner = require('./scanners/config');
 const path = require('path');
 const fs = require('fs');
 
@@ -190,7 +191,7 @@ class NTUSecurityOrchestrator {
     this.info(`   🟡 Medium: ${this.results.medium}`);
     this.info(`   🟢 Low: ${this.results.low}`);
     this.info('='.repeat(50));
-
+     this.info('scanner results length: ' + this.results.scannerResults.length);
     // Display per-scanner breakdown
     if (this.results.scannerResults.length > 1) {
       this.info('\n📋 Scanner Breakdown:');
@@ -604,6 +605,7 @@ async function run() {
     orchestrator.registerScanner(trivyScanner);
     // orchestrator.registerScanner(cdxgenScanner);
     orchestrator.registerScanner(secretDetectorScanner);
+    orchestrator.registerScanner(configScanner);
 
     // Initialize all scanners
     await orchestrator.initializeScanners();
