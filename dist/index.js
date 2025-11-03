@@ -109,6 +109,24 @@ class CdxgenScanner {
       const fullOutputPath = path.resolve(outputFilePath);
       
       this.log(`🔍 Generating SBOM for: ${targetDirectory}`);
+      this.log(`📂 Target directory contents:`);
+      
+      // List all files in the target directory
+      try {
+        const files = fs.readdirSync(targetDirectory);
+        if (files.length === 0) {
+          this.log(`   ⚠️  Directory is empty!`);
+        } else {
+          files.forEach(file => {
+            const filePath = path.join(targetDirectory, file);
+            const stats = fs.statSync(filePath);
+            const type = stats.isDirectory() ? '[DIR]' : '[FILE]';
+            this.log(`   ${type} ${file}`);
+          });
+        }
+      } catch (err) {
+        this.logError(`   Failed to list directory: ${err.message}`);
+      }
 
       const args = [
         '--spec-version', '1.4',
@@ -119,20 +137,47 @@ class CdxgenScanner {
 
       const command = `${this.binaryPath} ${args.join(' ')}`;
       this.log(`📝 Running: ${command}`);
+      this.log(`📄 Expected output file: ${fullOutputPath}`);
+
+      let stdout = '';
+      let stderr = '';
 
       try {
-        // Execute command with suppressed output (matching GitHub version)
-        execSync(command, {
+        // Capture output to see what CDXgen is doing
+        const result = execSync(command, {
           cwd: targetDirectory,
-          stdio: ['ignore', 'ignore', 'ignore'], // Suppress all output like GitHub version
+          encoding: 'utf8',
           maxBuffer: 10 * 1024 * 1024
         });
+        stdout = result;
       } catch (error) {
         // CDXgen might exit with non-zero code but still generate output
-        this.logDebug(`CDXgen exited with code: ${error.status}`);
+        stderr = error.stderr || '';
+        stdout = error.stdout || '';
+        this.log(`⚠️  CDXgen exited with code: ${error.status}`);
+        
+        if (stdout && stdout.trim()) {
+          this.log(`📤 CDXgen stdout:\n${stdout.substring(0, 1000)}`);
+        }
+        if (stderr && stderr.trim()) {
+          this.log(`📤 CDXgen stderr:\n${stderr.substring(0, 1000)}`);
+        }
       }
 
       this.log(`✅ SBOM generation completed`);
+      
+      // List directory again to see if any file was created
+      this.log(`📂 Directory contents after CDXgen:`);
+      try {
+        const filesAfter = fs.readdirSync(targetDirectory);
+        filesAfter.forEach(file => {
+          if (file.includes('sbom') || file.includes('bom') || file.includes('cdx')) {
+            this.log(`   🎯 ${file} (possible SBOM file)`);
+          }
+        });
+      } catch (err) {
+        this.logError(`   Failed to list directory: ${err.message}`);
+      }
 
       if (!fs.existsSync(fullOutputPath)) {
         this.logError(`❌ Output file not created: ${fullOutputPath}`);
@@ -250,7 +295,6 @@ class CdxgenScanner {
 }
 
 module.exports = new CdxgenScanner();
-
 
 // const execSync = require('child_process').execSync;
 // const { exec } = require('child_process');
