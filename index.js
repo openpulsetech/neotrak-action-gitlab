@@ -1,5 +1,5 @@
 const trivyScanner = require('./scanners/trivy');
-// const cdxgenScanner = require('./scanners/sbom');
+const cdxgenScanner = require('./scanners/sbom');
 const secretDetectorScanner = require('./scanners/secret-detector');
 const configScanner = require('./scanners/config');
 const path = require('path');
@@ -603,7 +603,7 @@ async function run() {
 
     // Register scanners
     orchestrator.registerScanner(trivyScanner);
-    // orchestrator.registerScanner(cdxgenScanner);
+    orchestrator.registerScanner(cdxgenScanner);
     orchestrator.registerScanner(secretDetectorScanner);
     orchestrator.registerScanner(configScanner);
 
